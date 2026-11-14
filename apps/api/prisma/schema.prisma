@@ -1,0 +1,390 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  PARTNER
+  OPS_ADMIN
+  OWNER
+}
+
+enum PartnerStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum CustomerCategory {
+  CATEGORY_A_PARTNER
+  CATEGORY_B_BIGOLA
+}
+
+enum AttributionSource {
+  REF_LINK
+  REF_CODE
+  OWNER_OFFLINE
+  PARTNER_OFFLINE
+}
+
+enum OrderStatus {
+  AWAITING_PAYMENT
+  PROOF_SUBMITTED
+  PAYMENT_VERIFIED
+  QUEUED
+  DISBURSING
+  PARTIALLY_FULFILLED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+  REFUNDED
+}
+
+enum ProofVerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum CommissionRuleStatus {
+  PENDING_RULE
+  ACTIVE
+  SUPERSEDED
+}
+
+enum CommissionSettlementStatus {
+  PENDING_RULE
+  ACCRUED
+  SETTLED
+  REVERSED
+}
+
+enum GameAccountRole {
+  MAIN_TREASURY
+  RESERVE
+}
+
+enum GameAccountHealth {
+  UNCONFIGURED
+  ACTIVE
+  COOLDOWN
+  SESSION_EXPIRED
+  LOW_BALANCE
+  DISABLED
+}
+
+enum InventoryEntryType {
+  TREASURY_SYNC
+  TREASURY_TO_RESERVE
+  ORDER_RESERVE
+  ORDER_RELEASE
+  DISBURSEMENT_DEBIT
+  MANUAL_ADJUSTMENT
+}
+
+enum DisbursementJobStatus {
+  PENDING
+  RUNNING
+  PAUSED
+  PARTIAL
+  COMPLETED
+  FAILED
+}
+
+enum DisbursementChunkStatus {
+  PENDING
+  IN_FLIGHT
+  SUCCEEDED
+  FAILED_RETRYABLE
+  AMBIGUOUS_MANUAL_REVIEW
+  FAILED_TERMINAL
+}
+
+model User {
+  id                     String   @id @default(uuid()) @db.Uuid
+  email                  String   @unique
+  phone                  String?  @unique
+  passwordHash           String   @map("password_hash")
+  role                   UserRole @default(CUSTOMER)
+  mfaEnabled             Boolean  @default(false) @map("mfa_enabled")
+  encryptedTotpSecret    String?  @map("encrypted_totp_secret")
+  recoveryCodeHashes     Json?    @map("recovery_code_hashes")
+  isActive               Boolean  @default(true) @map("is_active")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  sessions               UserSession[]
+  partnerProfile         Partner?
+  customerProfile        Customer?
+  verifiedProofs         PaymentProof[]   @relation("ProofVerifiedBy")
+  configuredRules        CommissionRule[] @relation("RuleConfiguredBy")
+  inventoryEntries       InventoryLedger[]
+  auditLogs              AuditLog[]       @relation("AuditActor")
+
+  @@map("users")
+}
+
+model UserSession {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  tokenHash   String    @unique @map("token_hash")
+  mfaVerified Boolean   @default(false) @map("mfa_verified")
+  ipAddress   String?   @map("ip_address")
+  userAgent   String?   @map("user_agent")
+  expiresAt   DateTime  @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_sessions")
+}
+
+model PlatformSetting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedBy   String?  @map("updated_by") @db.Uuid
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_settings")
+}
+
+model Partner {
+  id                  String        @id @default(uuid()) @db.Uuid
+  userId              String        @unique @map("user_id") @db.Uuid
+  referralCode        String        @unique @map("referral_code")
+  displayName         String        @map("display_name")
+  status              PartnerStatus @default(ACTIVE)
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  user                User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  attributedCustomers Customer[]
+  orders              Order[]
+  commissionRecords   CommissionRecord[]
+
+  @@map("partners")
+}
+
+model Customer {
+  id                  String            @id @default(uuid()) @db.Uuid
+  userId              String?           @unique @map("user_id") @db.Uuid
+  fullName            String            @map("full_name")
+  email               String?           @unique
+  phone               String?           @unique
+  lagoslifeUsername   String?           @map("lagoslife_username")
+  category            CustomerCategory  @default(CATEGORY_B_BIGOLA)
+  attributedPartnerId String?           @map("attributed_partner_id") @db.Uuid
+  attributedAt        DateTime?         @map("attributed_at")
+  attributionSource   AttributionSource? @map("attribution_source")
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+
+  user                User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  attributedPartner   Partner?          @relation(fields: [attributedPartnerId], references: [id], onDelete: Restrict)
+  orders              Order[]
+
+  @@index([attributedPartnerId])
+  @@map("customers")
+}
+
+model Order {
+  id                         String           @id @default(uuid()) @db.Uuid
+  orderNumber                String           @unique @map("order_number")
+  paymentReference           String           @unique @map("payment_reference")
+  customerId                 String           @map("customer_id") @db.Uuid
+  customerCategory           CustomerCategory @map("customer_category")
+  partnerId                  String?          @map("partner_id") @db.Uuid
+  recipientLagoslifeUsername String           @map("recipient_lagoslife_username")
+  gameAmountRequested        Decimal          @map("game_amount_requested") @db.Decimal(30, 0)
+  gameAmountDelivered        Decimal          @default(0) @map("game_amount_delivered") @db.Decimal(30, 0)
+  fiatAmountKobo             BigInt           @map("fiat_amount_kobo")
+  pricingSnapshot            Json             @map("pricing_snapshot")
+  status                     OrderStatus      @default(AWAITING_PAYMENT)
+  expiresAt                  DateTime?        @map("expires_at")
+  scheduledWindowStart       DateTime?        @map("scheduled_window_start")
+  scheduledWindowEnd         DateTime?        @map("scheduled_window_end")
+  createdAt                  DateTime         @default(now()) @map("created_at")
+  updatedAt                  DateTime         @updatedAt @map("updated_at")
+
+  customer                   Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  partner                    Partner?         @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  paymentProofs              PaymentProof[]
+  commissionRecord           CommissionRecord?
+  disbursementJobs           DisbursementJob[]
+  inventoryEntries           InventoryLedger[]
+
+  @@index([customerId, status])
+  @@index([partnerId])
+  @@map("orders")
+}
+
+model PaymentProof {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  orderId            String                  @map("order_id") @db.Uuid
+  bankReference      String                  @map("bank_reference")
+  senderAccountName  String                  @map("sender_account_name")
+  claimedAmountKobo  BigInt                  @map("claimed_amount_kobo")
+  proofFileKey       String                  @map("proof_file_key")
+  verificationStatus ProofVerificationStatus @default(PENDING) @map("verification_status")
+  verifiedById       String?                 @map("verified_by_id") @db.Uuid
+  rejectionReason    String?                 @map("rejection_reason")
+  verifiedAt         DateTime?               @map("verified_at")
+  createdAt          DateTime                @default(now()) @map("created_at")
+
+  order              Order                   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  verifiedBy         User?                   @relation("ProofVerifiedBy", fields: [verifiedById], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([bankReference, claimedAmountKobo])
+  @@map("payment_proofs")
+}
+
+model CommissionRule {
+  id              String               @id @default(uuid()) @db.Uuid
+  category        CustomerCategory
+  status          CommissionRuleStatus @default(PENDING_RULE)
+  partnerShareBps Int?                 @map("partner_share_bps")
+  ownerShareBps   Int?                 @map("owner_share_bps")
+  configuredById  String?              @map("configured_by_id") @db.Uuid
+  notes           String?
+  effectiveFrom   DateTime             @default(now()) @map("effective_from")
+  createdAt       DateTime             @default(now()) @map("created_at")
+
+  configuredBy    User?                @relation("RuleConfiguredBy", fields: [configuredById], references: [id], onDelete: Restrict)
+  records         CommissionRecord[]
+
+  @@index([category, status])
+  @@map("commission_rules")
+}
+
+model CommissionRecord {
+  id                     String                     @id @default(uuid()) @db.Uuid
+  orderId                String                     @unique @map("order_id") @db.Uuid
+  partnerId              String?                    @map("partner_id") @db.Uuid
+  category               CustomerCategory
+  ruleId                 String                     @map("rule_id") @db.Uuid
+  grossFiatKobo          BigInt                     @map("gross_fiat_kobo")
+  partnerEntitlementKobo BigInt?                    @map("partner_entitlement_kobo")
+  ownerEntitlementKobo   BigInt?                    @map("owner_entitlement_kobo")
+  settlementStatus       CommissionSettlementStatus @map("settlement_status")
+  settledAt              DateTime?                  @map("settled_at")
+  settlementReference    String?                    @map("settlement_reference")
+  createdAt              DateTime                   @default(now()) @map("created_at")
+
+  order                  Order                      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  partner                Partner?                   @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  rule                   CommissionRule             @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+
+  @@index([partnerId, settlementStatus])
+  @@map("commission_records")
+}
+
+model GameAccount {
+  id                     String            @id @default(uuid()) @db.Uuid
+  slotCode               String            @unique @map("slot_code")
+  lagoslifeUsername      String?           @unique @map("lagoslife_username")
+  accountRole            GameAccountRole   @map("account_role")
+  targetReserveAmount    Decimal           @default(0) @map("target_reserve_amount") @db.Decimal(30, 0)
+  lastKnownBalance       Decimal           @default(0) @map("last_known_balance") @db.Decimal(30, 0)
+  reservedForOrders      Decimal           @default(0) @map("reserved_for_orders") @db.Decimal(30, 0)
+  healthStatus           GameAccountHealth @default(UNCONFIGURED) @map("health_status")
+  encryptedSessionBundle String?           @map("encrypted_session_bundle")
+  lastSyncedAt           DateTime?         @map("last_synced_at")
+  createdAt              DateTime          @default(now()) @map("created_at")
+  updatedAt              DateTime          @updatedAt @map("updated_at")
+
+  inventoryEntries       InventoryLedger[]
+  disbursementChunks     DisbursementChunk[]
+
+  @@map("game_accounts")
+}
+
+model InventoryLedger {
+  id            String             @id @default(uuid()) @db.Uuid
+  gameAccountId String             @map("game_account_id") @db.Uuid
+  orderId       String?            @map("order_id") @db.Uuid
+  entryType     InventoryEntryType @map("entry_type")
+  deltaAmount   Decimal            @map("delta_amount") @db.Decimal(30, 0)
+  balanceAfter  Decimal            @map("balance_after") @db.Decimal(30, 0)
+  createdById   String?            @map("created_by_id") @db.Uuid
+  notes         String?
+  createdAt     DateTime           @default(now()) @map("created_at")
+
+  gameAccount   GameAccount        @relation(fields: [gameAccountId], references: [id], onDelete: Restrict)
+  order         Order?             @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  createdBy     User?              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([gameAccountId, createdAt])
+  @@index([orderId])
+  @@map("inventory_ledger")
+}
+
+model DisbursementJob {
+  id              String                @id @default(uuid()) @db.Uuid
+  orderId         String                @map("order_id") @db.Uuid
+  totalAmount     Decimal               @map("total_amount") @db.Decimal(30, 0)
+  deliveredAmount Decimal               @default(0) @map("delivered_amount") @db.Decimal(30, 0)
+  status          DisbursementJobStatus @default(PENDING)
+  totalChunks     Int                   @map("total_chunks")
+  completedChunks Int                   @default(0) @map("completed_chunks")
+  startedAt       DateTime?             @map("started_at")
+  completedAt     DateTime?             @map("completed_at")
+  createdAt       DateTime              @default(now()) @map("created_at")
+
+  order           Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  chunks          DisbursementChunk[]
+
+  @@index([orderId, status])
+  @@map("disbursement_jobs")
+}
+
+model DisbursementChunk {
+  id                String                  @id @default(uuid()) @db.Uuid
+  jobId             String                  @map("job_id") @db.Uuid
+  sourceAccountId   String                  @map("source_account_id") @db.Uuid
+  recipientUsername String                  @map("recipient_username")
+  amount            Decimal                 @db.Decimal(30, 0)
+  idempotencyKey    String                  @unique @map("idempotency_key")
+  status            DisbursementChunkStatus @default(PENDING)
+  attemptCount      Int                     @default(0) @map("attempt_count")
+  httpStatus        Int?                    @map("http_status")
+  errorMessage      String?                 @map("error_message")
+  reconciliationNote String?                @map("reconciliation_note")
+  executedAt        DateTime?               @map("executed_at")
+  createdAt         DateTime                @default(now()) @map("created_at")
+
+  job               DisbursementJob         @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  sourceAccount     GameAccount             @relation(fields: [sourceAccountId], references: [id], onDelete: Restrict)
+
+  @@index([jobId, status])
+  @@index([sourceAccountId, status])
+  @@map("disbursement_chunks")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  actionType  String   @map("action_type")
+  targetEntity String  @map("target_entity")
+  targetId    String?  @map("target_id")
+  beforeState Json?    @map("before_state")
+  afterState  Json?    @map("after_state")
+  reason      String?
+  ipAddress   String?  @map("ip_address")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([targetEntity, targetId])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
+}
+

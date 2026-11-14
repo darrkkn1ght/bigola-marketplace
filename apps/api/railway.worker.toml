@@ -1,0 +1,9 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm install && npm run build --workspace=@bigola/shared && npm run db:generate --workspace=@bigola/api && npm run build --workspace=@bigola/api"
+
+[deploy]
+startCommand = "npm run start:worker --workspace=@bigola/api"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+

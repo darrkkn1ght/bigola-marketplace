@@ -1,0 +1,114 @@
+export const PRIMARY_SUPPLIER_USERNAME = "bigola2823" as const;
+
+export const INITIAL_RESERVE_ACCOUNT_COUNT = 4;
+export const TARGET_RESERVE_PER_ACCOUNT = 70_000_000_000_000n; // 70 Trillion
+export const INITIAL_ACTIVE_RESERVE_TARGET = 280_000_000_000_000n; // 280 Trillion
+
+export const DEFAULT_BULK_PRICE_KOBO_PER_TRILLION = 100_000n; // ₦1,000.00 in kobo
+export const DEFAULT_BULK_MIN_GAME_AMOUNT = 10_000_000_000_000n; // 10 Trillion
+export const ONE_TRILLION = 1_000_000_000_000n;
+
+export type CustomerCategory = "CATEGORY_A_PARTNER" | "CATEGORY_B_BIGOLA";
+
+export type CommissionRuleInput =
+  | {
+      category: "CATEGORY_A_PARTNER";
+      partnerShareBps: 5000;
+      ownerShareBps: 5000;
+    }
+  | {
+      category: "CATEGORY_B_BIGOLA";
+      status: "PENDING_RULE";
+    }
+  | {
+      category: "CATEGORY_B_BIGOLA";
+      status: "CONFIGURED";
+      partnerShareBps: number;
+      ownerShareBps: number;
+    };
+
+export type CommissionSplitResult =
+  | {
+      status: "ACCRUED";
+      grossFiatKobo: bigint;
+      partnerEntitlementKobo: bigint;
+      ownerEntitlementKobo: bigint;
+    }
+  | {
+      status: "PENDING_RULE";
+      grossFiatKobo: bigint;
+      partnerEntitlementKobo: null;
+      ownerEntitlementKobo: null;
+    };
+
+/**
+ * Calculates immutable commission entitlements from gross verified customer payment (in kobo).
+ * - Category A: strictly 50/50 split of full verified customer payment.
+ * - Category B: remains PENDING_RULE with null entitlements until Owner configures a rule.
+ */
+export function calculateCommissionSplit(
+  grossFiatKobo: bigint,
+  rule: CommissionRuleInput
+): CommissionSplitResult {
+  if (grossFiatKobo <= 0n) {
+    throw new Error("Gross verified payment must be greater than zero kobo.");
+  }
+
+  if (rule.category === "CATEGORY_A_PARTNER") {
+    const partnerEntitlementKobo = (grossFiatKobo * 5000n) / 10000n;
+    const ownerEntitlementKobo = grossFiatKobo - partnerEntitlementKobo;
+    return {
+      status: "ACCRUED",
+      grossFiatKobo,
+      partnerEntitlementKobo,
+      ownerEntitlementKobo,
+    };
+  }
+
+  if (rule.status === "PENDING_RULE") {
+    return {
+      status: "PENDING_RULE",
+      grossFiatKobo,
+      partnerEntitlementKobo: null,
+      ownerEntitlementKobo: null,
+    };
+  }
+
+  if (
+    !Number.isInteger(rule.partnerShareBps) ||
+    !Number.isInteger(rule.ownerShareBps) ||
+    rule.partnerShareBps < 0 ||
+    rule.ownerShareBps < 0 ||
+    rule.partnerShareBps + rule.ownerShareBps !== 10000
+  ) {
+    throw new Error("Configured commission basis points must be non-negative integers summing to 10000.");
+  }
+
+  const partnerEntitlementKobo = (grossFiatKobo * BigInt(rule.partnerShareBps)) / 10000n;
+  const ownerEntitlementKobo = grossFiatKobo - partnerEntitlementKobo;
+
+  return {
+    status: "ACCRUED",
+    grossFiatKobo,
+    partnerEntitlementKobo,
+    ownerEntitlementKobo,
+  };
+}
+
+/**
+ * Computes bulk order fiat cost in kobo from a configurable rate per 1T.
+ */
+export function calculateBulkOrderFiatKobo(
+  gameAmount: bigint,
+  priceKoboPerTrillion: bigint = DEFAULT_BULK_PRICE_KOBO_PER_TRILLION,
+  minBulkAmount: bigint = DEFAULT_BULK_MIN_GAME_AMOUNT
+): bigint {
+  if (gameAmount < minBulkAmount) {
+    throw new Error(`Bulk orders require at least ${minBulkAmount.toString()} in-game Naira.`);
+  }
+  if (gameAmount % ONE_TRILLION !== 0n) {
+    throw new Error("Bulk orders must be in whole 1 Trillion increments.");
+  }
+  return (gameAmount / ONE_TRILLION) * priceKoboPerTrillion;
+}
+
