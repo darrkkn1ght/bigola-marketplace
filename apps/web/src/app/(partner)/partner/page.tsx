@@ -48,9 +48,20 @@ interface PartnerAnalyticsData {
   reversedCommissionKobo: string;
 }
 
+interface PartnerReadinessResponse {
+  readyForFirstOrder: boolean;
+  checks: Array<{
+    key: string;
+    label: string;
+    status: "READY" | "ACTION_REQUIRED";
+    detail: string;
+  }>;
+}
+
 export default function PartnerOverviewPage() {
   const [dashboard, setDashboard] = useState<PartnerDashboardData | null>(null);
   const [analytics, setAnalytics] = useState<PartnerAnalyticsData | null>(null);
+  const [readiness, setReadiness] = useState<PartnerReadinessResponse | null>(null);
   const [recentOrders, setRecentOrders] = useState<PartnerOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,11 +71,13 @@ export default function PartnerOverviewPage() {
       apiRequest<PartnerDashboardData>("/partner/dashboard"),
       apiRequest<{ orders: PartnerOrder[] }>("/partner/orders"),
       apiRequest<{ analytics: PartnerAnalyticsData }>("/partner/analytics?days=30"),
+      apiRequest<PartnerReadinessResponse>("/partner/readiness").catch(() => null),
     ])
-      .then(([dash, ord, ana]) => {
+      .then(([dash, ord, ana, rdy]) => {
         setDashboard(dash);
         setRecentOrders(ord.orders.slice(0, 6));
         setAnalytics(ana.analytics);
+        setReadiness(rdy);
       })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
@@ -133,6 +146,44 @@ export default function PartnerOverviewPage() {
                   hint={`${dashboard.metrics.totalOrders} total order(s)`}
                 />
               </div>
+
+              {readiness && (
+                <Card
+                  title="Marketplace Launch Readiness"
+                  subtitle={
+                    readiness.readyForFirstOrder
+                      ? "Marketplace is ready to accept real customer orders through your referral link."
+                      : "Some prerequisites are still pending before buyers can complete orders."
+                  }
+                  action={
+                    <StatusBadge
+                      label={readiness.readyForFirstOrder ? "OPEN FOR ORDERS" : "SETUP PENDING"}
+                      tone={readiness.readyForFirstOrder ? "success" : "warning"}
+                    />
+                  }
+                >
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {readiness.checks.map((chk) => (
+                      <div
+                        key={chk.key}
+                        className={`rounded-xl border p-3 ${chk.status === "READY"
+                            ? "border-emerald-200 bg-emerald-50/50"
+                            : "border-amber-200 bg-amber-50/70"
+                          }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-[#0B1324]">{chk.label}</span>
+                          <StatusBadge
+                            label={chk.status === "READY" ? "READY" : "PENDING"}
+                            tone={chk.status === "READY" ? "success" : "warning"}
+                          />
+                        </div>
+                        <p className="mt-1 text-xs text-slate-600">{chk.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
 
               <Card
                 title="Your Referral Link"

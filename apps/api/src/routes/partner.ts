@@ -626,4 +626,80 @@ export function registerPartnerRoutes(
       }
     }
   );
+
+  // Partner operational readiness (aggregate only; never exposes internal 5-account architecture)
+  app.get(
+    "/api/v1/partner/readiness",
+    { preHandler: [deps.authenticate, deps.requirePermission(Permission.PARTNER_DASHBOARD_OWN)] },
+    async (_request, reply) => {
+      if (!deps.prisma) {
+        return reply.code(503).send({ error: "Partner readiness requires database." });
+      }
+      const now = Date.now();
+      const [accounts, settings, activeBankCount] = await Promise.all([
+        deps.prisma.gameAccount.findMany({
+          select: {
+            healthStatus: true,
+            lastKnownBalance: true,
+            reservedForOrders: true,
+            lastSyncedAt: true,
+          },
+        }),
+        deps.platformStore.getSettings(),
+        deps.prisma.receivingBankAccount.count({ where: { isActive: true } }),
+      ]);
+
+      const settingMap = new Map(settings.map((s) => [s.key, s.value as Record<string, unknown>]));
+      const freshnessRaw = settingMap.get("inventory_freshness_policy");
+      const maxAgeMinutes =
+        typeof freshnessRaw?.maxAgeMinutes === "number" && freshnessRaw.maxAgeMinutes > 0
+          ? freshnessRaw.maxAgeMinutes
+          : 30;
+      const bulkRaw = settingMap.get("bulk_pricing");
+      const bulkEnabled = bulkRaw?.enabled !== false;
+      const bulkPriceValid =
+        typeof bulkRaw?.priceKoboPerTrillion === "string" && BigInt(bulkRaw.priceKoboPerTrillion) > 0n;
+
+      let reservableAvailable = 0n;
+      for (const acc of accounts) {
+        if (acc.healthStatus !== "ACTIVE") continue;
+        if (!acc.lastSyncedAt || now - acc.lastSyncedAt.getTime() > maxAgeMinutes * 60_000) continue;
+        const obs = BigInt(acc.lastKnownBalance.toFixed(0));
+        const res = BigInt(acc.reservedForOrders.toFixed(0));
+        if (obs > res) reservableAvailable += obs - res;
+      }
+
+      const hasFreshStock = reservableAvailable > 0n;
+      const hasPricing = bulkEnabled && bulkPriceValid;
+      const hasReceivingBank = activeBankCount > 0;
+
+      return reply.code(200).send({
+        readyForFirstOrder: hasFreshStock && hasPricing && hasReceivingBank,
+        checks: [
+          {
+            key: "stock",
+            label: "Marketplace Stock Availability",
+            status: hasFreshStock ? "READY" : "ACTION_REQUIRED",
+            detail: hasFreshStock
+              ? "Verified stock is fresh and open for customer orders."
+              : "Waiting on Owner to sync fresh LagosLife inventory.",
+          },
+          {
+            key: "pricing",
+            label: "Bulk Pricing",
+            status: hasPricing ? "READY" : "ACTION_REQUIRED",
+            detail: hasPricing ? "Customer pricing is active." : "Customer pricing is not active.",
+          },
+          {
+            key: "receiving_bank",
+            label: "OPay Receiving Account",
+            status: hasReceivingBank ? "READY" : "ACTION_REQUIRED",
+            detail: hasReceivingBank
+              ? "Active receiving bank account is live for customer payments."
+              : "Owner/Partner must configure and approve an active receiving bank account.",
+          },
+        ],
+      });
+    }
+  );
 }

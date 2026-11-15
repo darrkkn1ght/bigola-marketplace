@@ -129,11 +129,27 @@ function jobTone(status: string): "success" | "warning" | "danger" | "info" | "n
   }
 }
 
+interface ReadinessCheck {
+  key: string;
+  label: string;
+  status: "READY" | "ACTION_REQUIRED" | "INFO";
+  detail: string;
+  actionHref: string;
+  actionLabel: string;
+}
+
+interface OwnerReadinessResponse {
+  readyForFirstOrder: boolean;
+  disbursementEnabled: boolean;
+  checks: ReadinessCheck[];
+}
+
 export default function OwnerOverviewPage() {
   const [accountability, setAccountability] = useState<AccountabilityData | null>(null);
   const [inventory, setInventory] = useState<InventoryOverview | null>(null);
   const [orders, setOrders] = useState<OwnerOrderRow[]>([]);
   const [pipelines, setPipelines] = useState<OperationalPipelineResponse | null>(null);
+  const [readiness, setReadiness] = useState<OwnerReadinessResponse | null>(null);
   const [conflictsCount, setConflictsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -142,18 +158,20 @@ export default function OwnerOverviewPage() {
   const loadDashboard = useCallback(async (isManual = false) => {
     if (isManual) setRefreshing(true);
     try {
-      const [acc, inv, ord, conf, pipe] = await Promise.all([
+      const [acc, inv, ord, conf, pipe, rdy] = await Promise.all([
         apiRequest<AccountabilityData>("/owner/financial-accountability"),
         apiRequest<InventoryOverview>("/owner/inventory"),
         apiRequest<{ orders: OwnerOrderRow[] }>("/owner/orders"),
         apiRequest<{ conflicts: Array<{ status: string }> }>("/owner/attribution-conflicts"),
         apiRequest<OperationalPipelineResponse>("/owner/operations/pipelines").catch(() => null),
+        apiRequest<OwnerReadinessResponse>("/owner/readiness").catch(() => null),
       ]);
       setAccountability(acc);
       setInventory(inv);
       setOrders(ord.orders.slice(0, 8));
       setConflictsCount(conf.conflicts.filter((c) => c.status === "PENDING").length);
       setPipelines(pipe);
+      setReadiness(rdy);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load Owner dashboard.");
@@ -256,6 +274,63 @@ export default function OwnerOverviewPage() {
                 }
               />
             </div>
+
+            {/* First-Customer Launch Readiness Checklist */}
+            {readiness && (
+              <Card
+                title="First-Customer Launch Readiness"
+                subtitle={
+                  readiness.readyForFirstOrder
+                    ? "All prerequisites are met. Customers can reserve stock, transfer via OPay, and submit payment proof."
+                    : "Complete the items marked ACTION REQUIRED before directing real customers to place orders."
+                }
+                action={
+                  <StatusBadge
+                    label={readiness.readyForFirstOrder ? "READY FOR ORDERS" : "SETUP INCOMPLETE"}
+                    tone={readiness.readyForFirstOrder ? "success" : "warning"}
+                  />
+                }
+              >
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {readiness.checks.map((chk) => (
+                    <div
+                      key={chk.key}
+                      className={`rounded-xl border p-3.5 flex flex-col justify-between gap-2 ${
+                        chk.status === "ACTION_REQUIRED"
+                          ? "border-amber-200 bg-amber-50/70"
+                          : chk.status === "READY"
+                            ? "border-emerald-200 bg-emerald-50/50"
+                            : "border-slate-200 bg-slate-50/60"
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-[#0B1324]">{chk.label}</span>
+                          <StatusBadge
+                            label={chk.status === "ACTION_REQUIRED" ? "ACTION REQUIRED" : chk.status}
+                            tone={
+                              chk.status === "READY"
+                                ? "success"
+                                : chk.status === "ACTION_REQUIRED"
+                                  ? "warning"
+                                  : "info"
+                            }
+                          />
+                        </div>
+                        <p className="text-xs text-slate-600">{chk.detail}</p>
+                      </div>
+                      <div>
+                        <Link href={chk.actionHref}>
+                          <Button variant="secondary" size="sm">
+                            {chk.actionLabel}
+                          </Button>
+                        </Link>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
 
             {/* Operational Attention Alerts */}
             {pipelines &&

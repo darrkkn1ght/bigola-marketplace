@@ -86,8 +86,39 @@ export default function MarketplacePage() {
     ? Number(BigInt(bulk.minBulkGameAmount) / ONE_TRILLION)
     : 10;
   const pricePerT = bulk ? BigInt(bulk.priceKoboPerTrillion) : 100_000n;
+  const bulkEnabled = bulk?.enabled !== false;
+  const hasAvailableStock = isFresh && BigInt(reservableAvailable) > 0n;
   const validQuantity = Number.isInteger(trillions) && trillions >= minTrillions;
   const totalKobo = validQuantity ? BigInt(trillions) * pricePerT : 0n;
+
+  async function handleRetailOrder(packageId: string) {
+    if (!recipientUsername.trim() || recipientUsername.trim().length < 2) {
+      setError("Please enter your Recipient LagosLife Username above before selecting a retail package.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const idempotencyKey =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `ord-ret-${Date.now()}`;
+      const res = await apiRequest<{ order: { id: string } }>("/orders", {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify({
+          orderType: "RETAIL",
+          packageId,
+          recipientLagoslifeUsername: recipientUsername.trim(),
+        }),
+      });
+      router.push(`/marketplace/orders/${res.order.id}`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   async function handlePlaceOrder(e: React.FormEvent) {
     e.preventDefault();
@@ -147,6 +178,14 @@ export default function MarketplacePage() {
         {error && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
             {error}
+          </div>
+        )}
+
+        {!loading && catalog && (!hasAvailableStock || !bulkEnabled) && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {!hasAvailableStock
+              ? "Stock Sync Pending: Verified inventory is currently unavailable or awaiting refresh. Ordering will resume automatically once stock is synced."
+              : "Bulk ordering is temporarily paused by the marketplace administrator."}
           </div>
         )}
 
@@ -261,13 +300,15 @@ export default function MarketplacePage() {
                     type="submit"
                     size="lg"
                     className="w-full py-3"
-                    disabled={submitting || !validQuantity || !isFresh}
+                    disabled={submitting || !validQuantity || !hasAvailableStock || !bulkEnabled}
                   >
                     {submitting
                       ? "Reserving Stock…"
-                      : !isFresh
+                      : !hasAvailableStock
                         ? "Stock Temporarily Paused (Sync Pending)"
-                        : `Reserve ${trillions}T & View OPay Details`}
+                        : !bulkEnabled
+                          ? "Bulk Ordering Temporarily Paused"
+                          : `Reserve ${trillions}T & View OPay Details`}
                   </Button>
                 </form>
               </Card>
@@ -280,13 +321,24 @@ export default function MarketplacePage() {
                       .map((pkg) => (
                         <div
                           key={pkg.id}
-                          className="rounded-xl border border-slate-200 bg-slate-50/60 p-4"
+                          className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 flex flex-col justify-between gap-3"
                         >
-                          <p className="font-display font-bold text-[#0B1324]">{pkg.name}</p>
-                          <p className="text-xs text-slate-500">{formatTrillions(pkg.gameAmount)}</p>
-                          <p className="mt-2 font-mono-tabular text-sm font-bold text-[#059669]">
-                            {formatNaira(pkg.fiatKobo)}
-                          </p>
+                          <div>
+                            <p className="font-display font-bold text-[#0B1324]">{pkg.name}</p>
+                            <p className="text-xs text-slate-500">{formatTrillions(pkg.gameAmount)}</p>
+                            <p className="mt-2 font-mono-tabular text-sm font-bold text-[#059669]">
+                              {formatNaira(pkg.fiatKobo)}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            disabled={submitting || !hasAvailableStock}
+                            onClick={() => void handleRetailOrder(pkg.id)}
+                          >
+                            {hasAvailableStock ? "Reserve Package" : "Stock Pending"}
+                          </Button>
                         </div>
                       ))}
                   </div>

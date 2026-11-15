@@ -1690,11 +1690,20 @@ export default function OwnerOrdersPage() {
                 )}
               </div>
 
-              {/* Manual Fulfilment Fallback */}
+              {/* Manual Fulfilment Confirmation */}
               <div className="rounded-xl border border-slate-200 p-4 space-y-3">
-                <h3 className="text-sm font-bold text-slate-900">
-                  Manual Fulfilment Confirmation (Fallback)
-                </h3>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Record Manual LagosLife Delivery
+                  </h3>
+                  <StatusBadge
+                    label={disbursementEnabled ? "Fallback" : "Primary Mode (DISBURSEMENT_ENABLED=false)"}
+                    tone={disbursementEnabled ? "neutral" : "info"}
+                  />
+                </div>
+                <p className="text-xs text-slate-600">
+                  Logs an externally completed LagosLife transfer. Does not initiate an automatic transfer.
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   <select
                     value={manualAccountId}
@@ -1708,17 +1717,35 @@ export default function OwnerOrdersPage() {
                       </option>
                     ))}
                   </select>
-                  <input
-                    type="number"
-                    placeholder="Amount in Billions (e.g. 500)"
-                    value={manualAmountBillions}
-                    onChange={(e) => setManualAmountBillions(e.target.value)}
-                    className="rounded border border-slate-300 px-2.5 py-1.5 text-xs"
-                  />
+                  <div className="flex gap-1.5">
+                    <input
+                      type="number"
+                      placeholder="Amount in Billions (e.g. 500)"
+                      value={manualAmountBillions}
+                      onChange={(e) => setManualAmountBillions(e.target.value)}
+                      className="w-full rounded border border-slate-300 px-2.5 py-1.5 text-xs"
+                    />
+                    {(() => {
+                      const req = parseBigIntSafe(detail.gameAmountRequested);
+                      const ful = parseBigIntSafe(detail.fulfilledAmount);
+                      const remB = req > ful ? (req - ful) / ONE_BILLION : 0n;
+                      if (remB <= 0n) return null;
+                      return (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => setManualAmountBillions(remB.toString())}
+                        >
+                          Fill {remB.toString()}B
+                        </Button>
+                      );
+                    })()}
+                  </div>
                 </div>
                 <input
                   type="text"
-                  placeholder="External Transfer Reference"
+                  placeholder="External Transfer Reference (required)"
                   value={manualExternalRef}
                   onChange={(e) => setManualExternalRef(e.target.value)}
                   className="w-full rounded border border-slate-300 px-2.5 py-1.5 text-xs"
@@ -1731,9 +1758,15 @@ export default function OwnerOrdersPage() {
                   className="w-full rounded border border-slate-300 px-2.5 py-1.5 text-xs"
                 />
                 <Button
-                  variant="secondary"
+                  variant="primary"
                   onClick={handleManualFulfilment}
-                  disabled={disbBusy}
+                  disabled={
+                    disbBusy ||
+                    !manualAccountId ||
+                    !manualAmountBillions ||
+                    Number(manualAmountBillions) <= 0 ||
+                    !manualExternalRef.trim()
+                  }
                 >
                   Record Manual Delivery
                 </Button>

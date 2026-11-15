@@ -231,6 +231,120 @@ export function registerOwnerRoutes(
     });
   });
 
+  app.get("/api/v1/owner/readiness", { preHandler: ownerGuard }, async (_request, reply) => {
+    const now = Date.now();
+    const [accounts, settings, activeBankCount] = await Promise.all([
+      deps.prisma
+        ? deps.prisma.gameAccount.findMany({ orderBy: { slotCode: "asc" } })
+        : Promise.resolve([]),
+      deps.platformStore.getSettings(),
+      deps.prisma
+        ? deps.prisma.receivingBankAccount.count({ where: { isActive: true } })
+        : Promise.resolve(0),
+    ]);
+
+    const settingMap = new Map(settings.map((s) => [s.key, s.value as Record<string, unknown>]));
+    const freshnessRaw = settingMap.get("inventory_freshness_policy");
+    const maxAgeMinutes =
+      typeof freshnessRaw?.maxAgeMinutes === "number" && freshnessRaw.maxAgeMinutes > 0
+        ? freshnessRaw.maxAgeMinutes
+        : 30;
+    const bulkRaw = settingMap.get("bulk_pricing");
+    const bulkEnabled = bulkRaw?.enabled !== false;
+    const bulkPriceValid =
+      typeof bulkRaw?.priceKoboPerTrillion === "string" && BigInt(bulkRaw.priceKoboPerTrillion) > 0n;
+    const retailRaw = settingMap.get("regular_pricing");
+    const retailConfigured = retailRaw?.status === "CONFIGURED";
+
+    const configuredAccounts = accounts.filter((a) => Boolean(a.lagoslifeUsername));
+    const activeAccounts = accounts.filter((a) => a.healthStatus === GameAccountHealth.ACTIVE);
+    const freshActiveAccounts = activeAccounts.filter(
+      (a) => a.lastSyncedAt && now - a.lastSyncedAt.getTime() <= maxAgeMinutes * 60_000
+    );
+
+    let reservableAvailable = 0n;
+    for (const acc of freshActiveAccounts) {
+      const obs = BigInt(acc.lastKnownBalance.toFixed(0));
+      const res = BigInt(acc.reservedForOrders.toFixed(0));
+      if (obs > res) reservableAvailable += obs - res;
+    }
+
+    const hasFreshStock = freshActiveAccounts.length > 0 && reservableAvailable > 0n;
+    const hasPricing = bulkEnabled && bulkPriceValid;
+    const hasReceivingBank = activeBankCount > 0;
+    const readyForFirstOrder = hasFreshStock && hasPricing && hasReceivingBank;
+    const disbursementEnabled = deps.disbursementEnabled ?? false;
+
+    return reply.code(200).send({
+      readyForFirstOrder,
+      disbursementEnabled,
+      summary: {
+        totalAccounts: accounts.length,
+        configuredAccounts: configuredAccounts.length,
+        activeAccounts: activeAccounts.length,
+        freshActiveAccounts: freshActiveAccounts.length,
+        reservableAvailable: reservableAvailable.toString(),
+        activeReceivingBanks: activeBankCount,
+        maxAgeMinutes,
+        bulkEnabled,
+        retailConfigured,
+      },
+      checks: [
+        {
+          key: "game_accounts",
+          label: "LagosLife Game Accounts (5 Slots)",
+          status:
+            configuredAccounts.length >= 5 && activeAccounts.length >= 5
+              ? "READY"
+              : "ACTION_REQUIRED",
+          detail: `${configuredAccounts.length}/${accounts.length || 5} configured, ${activeAccounts.length} ACTIVE.`,
+          actionHref: "/owner/inventory",
+          actionLabel: "Configure Accounts",
+        },
+        {
+          key: "inventory_freshness",
+          label: "Fresh Reservable Stock",
+          status: hasFreshStock ? "READY" : "ACTION_REQUIRED",
+          detail: hasFreshStock
+            ? `${freshActiveAccounts.length} fresh account(s) synced within ${maxAgeMinutes}m.`
+            : `No fresh stock available (sync within ${maxAgeMinutes}m required).`,
+          actionHref: "/owner/inventory",
+          actionLabel: "Sync Balances",
+        },
+        {
+          key: "pricing",
+          label: "Customer Pricing",
+          status: hasPricing ? "READY" : "ACTION_REQUIRED",
+          detail: hasPricing
+            ? `Bulk pricing active${retailConfigured ? " • Retail configured" : " • Retail optional"}.`
+            : "Bulk pricing must be enabled with a valid rate.",
+          actionHref: "/owner/pricing",
+          actionLabel: "Review Pricing",
+        },
+        {
+          key: "receiving_bank",
+          label: "Active Receiving Bank Account (OPay)",
+          status: hasReceivingBank ? "READY" : "ACTION_REQUIRED",
+          detail: hasReceivingBank
+            ? `${activeBankCount} active receiving account(s) ready for customer transfers.`
+            : "No active receiving bank account configured for customer payment instructions.",
+          actionHref: "/owner/settings",
+          actionLabel: "Configure Bank",
+        },
+        {
+          key: "fulfilment_mode",
+          label: "Fulfilment Mode",
+          status: "INFO",
+          detail: disbursementEnabled
+            ? "Automated disbursement enabled."
+            : "Manual Fulfilment Mode active (DISBURSEMENT_ENABLED=false) — safe for first launch.",
+          actionHref: "/owner/orders",
+          actionLabel: "Open Fulfilment Desk",
+        },
+      ],
+    });
+  });
+
   app.put(
     "/api/v1/owner/settings/:key",
     { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_SETTINGS_MANAGE)] },
