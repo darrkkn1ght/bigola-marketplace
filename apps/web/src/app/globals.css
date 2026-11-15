@@ -2,9 +2,12 @@
 
 :root {
   color-scheme: light;
-  --bg-canvas: #f8fafc;
+  --bg-canvas: #f4f6fa;
   --bg-card: #ffffff;
-  --text-primary: #0f172a;
+  --navy-950: #070d1a;
+  --navy-900: #0b1324;
+  --navy-800: #13203b;
+  --text-primary: #0b1324;
   --text-secondary: #475569;
   --text-muted: #94a3b8;
   --border-subtle: #e2e8f0;
@@ -20,6 +23,15 @@ body {
   font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
+h1,
+h2,
+h3,
+h4,
+.font-display {
+  font-family: var(--font-display), var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.015em;
+}
+
 .font-mono-tabular {
   font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-variant-numeric: tabular-nums;
@@ -27,4 +39,19 @@ body {
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
 }

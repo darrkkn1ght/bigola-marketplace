@@ -1,17 +1,22 @@
 "use client";
 
 import { useState } from "react";
+import { useToast } from "./Toast";
 
-type ButtonVariant = "primary" | "partner" | "owner" | "secondary" | "danger" | "ghost";
+type ButtonVariant = "primary" | "navy" | "partner" | "owner" | "secondary" | "danger" | "ghost";
 type ButtonSize = "sm" | "md" | "lg";
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  primary: "bg-[#059669] text-white hover:bg-[#047857] shadow-xs",
-  partner: "bg-[#0284C7] text-white hover:bg-sky-700 shadow-xs",
-  owner: "bg-[#4F46E5] text-white hover:bg-indigo-700 shadow-xs",
-  secondary: "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 shadow-xs",
-  danger: "bg-[#DC2626] text-white hover:bg-red-700 shadow-xs",
-  ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+  primary:
+    "bg-[#059669] text-white hover:bg-[#047857] focus-visible:ring-emerald-500/40 shadow-xs",
+  navy: "bg-[#0B1324] text-white hover:bg-[#162340] focus-visible:ring-slate-700/40 shadow-xs",
+  partner: "bg-[#0284C7] text-white hover:bg-sky-700 focus-visible:ring-sky-500/40 shadow-xs",
+  owner:
+    "bg-[#0B1324] text-white hover:bg-[#162340] ring-1 ring-emerald-500/20 focus-visible:ring-emerald-500/40 shadow-xs",
+  secondary:
+    "border border-slate-300 bg-white text-[#0B1324] hover:bg-slate-50 hover:border-slate-400 focus-visible:ring-slate-400/40 shadow-xs",
+  danger: "bg-[#DC2626] text-white hover:bg-red-700 focus-visible:ring-red-500/40 shadow-xs",
+  ghost: "text-slate-600 hover:bg-slate-100 hover:text-[#0B1324] focus-visible:ring-slate-400/30",
 };
 
 const SIZE_CLASSES: Record<ButtonSize, string> = {
@@ -33,7 +38,7 @@ export function Button({
   return (
     <button
       {...props}
-      className={`inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer ${VARIANT_CLASSES[variant]} ${SIZE_CLASSES[size]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-lg font-semibold transition-all duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer ${VARIANT_CLASSES[variant]} ${SIZE_CLASSES[size]} ${className}`}
     >
       {children}
     </button>
@@ -42,11 +47,13 @@ export function Button({
 
 export function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
   const [copied, setCopied] = useState(false);
+  const { pushToast } = useToast();
 
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(value);
       setCopied(true);
+      pushToast({ title: "Copied to clipboard", description: value, tone: "success" });
       setTimeout(() => setCopied(false), 1800);
     } catch {
       setCopied(false);
@@ -57,9 +64,13 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
     <button
       type="button"
       onClick={handleCopy}
-      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition-all duration-150 cursor-pointer ${
+        copied
+          ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+          : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 hover:border-slate-300"
+      }`}
     >
-      {copied ? "Copied" : label}
+      {copied ? "✓ Copied" : label}
     </button>
   );
 }
