@@ -13,9 +13,9 @@ import {
   UserRole,
 } from "@prisma/client";
 import { z } from "zod";
-import { Permission, PRIMARY_SUPPLIER_USERNAME } from "@bigola/shared";
+import { normalizeEmail, Permission, PRIMARY_SUPPLIER_USERNAME } from "@bigola/shared";
 import type { AuditLogger } from "../lib/audit.js";
-import { generateOpaqueToken, hashSessionToken } from "../lib/crypto.js";
+import { generateOpaqueToken, hashPassword, hashSessionToken } from "../lib/crypto.js";
 import type { PlatformStore } from "../lib/repositories.js";
 import { AnalyticsService } from "../services/analytics.js";
 import { AttributionError, type AttributionService } from "../services/attribution.js";
@@ -370,6 +370,97 @@ export function registerOwnerRoutes(
       });
 
       return reply.code(200).send({ setting: updated });
+    }
+  );
+
+  app.get(
+    "/api/v1/owner/co-owners",
+    { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_SETTINGS_MANAGE)] },
+    async (_request, reply) => {
+      if (!deps.prisma) {
+        return reply.code(503).send({ error: "Database service unavailable." });
+      }
+      const owners = await deps.prisma.user.findMany({
+        where: { role: UserRole.OWNER },
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          email: true,
+          mfaEnabled: true,
+          isActive: true,
+          createdAt: true,
+        },
+      });
+      return reply.code(200).send({ owners });
+    }
+  );
+
+  app.post(
+    "/api/v1/owner/co-owners",
+    { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_SETTINGS_MANAGE)] },
+    async (request, reply) => {
+      if (!deps.prisma) {
+        return reply.code(503).send({ error: "Database service unavailable." });
+      }
+      const parsed = z
+        .object({
+          email: z.string().email(),
+          reason: z.string().min(3).max(500),
+        })
+        .safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Valid email and audit reason are required." });
+      }
+
+      const email = normalizeEmail(parsed.data.email);
+      const existing = await deps.prisma.user.findUnique({ where: { email }, select: { id: true } });
+      if (existing) {
+        return reply.code(409).send({ error: "An account with this email already exists." });
+      }
+
+      const placeholderHash = await hashPassword(crypto.randomBytes(24).toString("hex"));
+      const rawToken = generateOpaqueToken(24);
+      const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      const created = await deps.prisma.$transaction(async (tx) => {
+        const user = await tx.user.create({
+          data: {
+            email,
+            passwordHash: placeholderHash,
+            role: UserRole.OWNER,
+            mfaEnabled: false,
+            isActive: true,
+          },
+          select: { id: true, email: true, role: true, mfaEnabled: true, isActive: true, createdAt: true },
+        });
+        await tx.accountActionToken.create({
+          data: {
+            userId: user.id,
+            tokenHash,
+            type: AccountTokenType.PASSWORD_RESET,
+            issuedById: request.auth!.userId,
+            expiresAt,
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            actorUserId: request.auth!.userId,
+            actionType: "CO_OWNER_INVITED",
+            targetEntity: "USER",
+            targetId: user.id,
+            afterState: { email: user.email, role: user.role },
+            reason: parsed.data.reason.trim(),
+            ipAddress: request.ip,
+          },
+        });
+        return user;
+      });
+
+      return reply.code(201).send({
+        owner: created,
+        invitePath: `/reset-password?token=${encodeURIComponent(rawToken)}`,
+      });
     }
   );
 

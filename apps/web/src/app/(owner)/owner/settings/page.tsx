@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth-context";
 import { formatDateTime } from "@/lib/format";
 import { OwnerShell } from "@/components/OwnerShell";
 import { Card } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { Button, CopyButton } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 
@@ -20,6 +20,14 @@ interface AuditLogRow {
   actor: { email: string; role: string } | null;
 }
 
+interface CoOwnerRow {
+  id: string;
+  email: string;
+  mfaEnabled: boolean;
+  isActive: boolean;
+  createdAt: string;
+}
+
 export default function OwnerSettingsPage() {
   const { user } = useAuth();
   const [expiryMinutes, setExpiryMinutes] = useState("30");
@@ -27,18 +35,26 @@ export default function OwnerSettingsPage() {
   const [maxOrders, setMaxOrders] = useState("2");
   const [policyReason, setPolicyReason] = useState("");
   const [logs, setLogs] = useState<AuditLogRow[]>([]);
+  const [coOwners, setCoOwners] = useState<CoOwnerRow[]>([]);
+  const [coOwnerEmail, setCoOwnerEmail] = useState("");
+  const [coOwnerReason, setCoOwnerReason] = useState("");
+  const [invitingCoOwner, setInvitingCoOwner] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [invitedEmail, setInvitedEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const { pushToast } = useToast();
 
   const loadSettings = useCallback(async () => {
     try {
-      const [invRes, logRes] = await Promise.all([
+      const [invRes, logRes, coOwnerRes] = await Promise.all([
         apiRequest<{ maxAgeMinutes: number }>("/owner/inventory"),
         apiRequest<{ logs: AuditLogRow[] }>("/owner/audit-logs"),
+        apiRequest<{ owners: CoOwnerRow[] }>("/owner/co-owners"),
       ]);
       setFreshnessMinutes(String(invRes.maxAgeMinutes));
       setLogs(logRes.logs.slice(0, 25));
+      setCoOwners(coOwnerRes.owners);
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -67,6 +83,39 @@ export default function OwnerSettingsPage() {
       await loadSettings();
     } catch (err) {
       setError((err as Error).message);
+    }
+  }
+
+  async function handleInviteCoOwner(e: React.FormEvent) {
+    e.preventDefault();
+    if (!coOwnerEmail.trim() || coOwnerReason.trim().length < 3) {
+      setError("Enter a valid co-owner email and audit reason (min 3 chars).");
+      return;
+    }
+    setInvitingCoOwner(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await apiRequest<{ owner: CoOwnerRow; invitePath: string }>("/owner/co-owners", {
+        method: "POST",
+        body: JSON.stringify({
+          email: coOwnerEmail.trim(),
+          reason: coOwnerReason.trim(),
+        }),
+      });
+      const fullLink =
+        typeof window !== "undefined" ? `${window.location.origin}${res.invitePath}` : res.invitePath;
+      setInviteLink(fullLink);
+      setInvitedEmail(res.owner.email);
+      setCoOwnerEmail("");
+      setCoOwnerReason("");
+      setNotice(`Co-owner account created for ${res.owner.email}. Share the one-time setup link below.`);
+      pushToast({ title: "Co-owner invited", tone: "success" });
+      await loadSettings();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setInvitingCoOwner(false);
     }
   }
 
@@ -214,6 +263,85 @@ export default function OwnerSettingsPage() {
             </div>
           </Card>
         </div>
+
+        <Card title="Co-Owner Accounts">
+          <div className="space-y-4">
+            <p className="text-xs text-slate-600">
+              Both owners share full Owner dashboard permissions. Invite your co-owner below to generate a one-time
+              24-hour password setup link.
+            </p>
+
+            {coOwners.length > 0 && (
+              <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-slate-50/50 px-3">
+                {coOwners.map((owner) => (
+                  <div key={owner.id} className="py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div>
+                      <span className="font-medium text-slate-900">{owner.email}</span>
+                      <span className="text-slate-400"> • Added {formatDateTime(owner.createdAt)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <StatusBadge
+                        label={owner.mfaEnabled ? "2FA Active" : "2FA Pending"}
+                        tone={owner.mfaEnabled ? "success" : "warning"}
+                      />
+                      <StatusBadge
+                        label={owner.isActive ? "Active" : "Inactive"}
+                        tone={owner.isActive ? "info" : "danger"}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <form onSubmit={handleInviteCoOwner} className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Co-Owner Email</label>
+                <input
+                  type="email"
+                  required
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs"
+                  placeholder="co-owner@example.com"
+                  value={coOwnerEmail}
+                  onChange={(e) => setCoOwnerEmail(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Audit Reason (min 3 chars)</label>
+                <input
+                  type="text"
+                  required
+                  minLength={3}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs"
+                  placeholder="e.g. Add second owner account"
+                  value={coOwnerReason}
+                  onChange={(e) => setCoOwnerReason(e.target.value)}
+                />
+              </div>
+              <Button type="submit" size="sm" disabled={invitingCoOwner}>
+                {invitingCoOwner ? "Inviting..." : "Invite Co-Owner"}
+              </Button>
+            </form>
+
+            {inviteLink && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 space-y-2">
+                <p className="font-semibold">
+                  One-time setup link for {invitedEmail} (expires in 24 hours):
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <code className="flex-1 break-all rounded bg-white px-2.5 py-1.5 font-mono-tabular text-[11px] text-slate-800 border border-amber-200">
+                    {inviteLink}
+                  </code>
+                  <CopyButton value={inviteLink} label="Copy Setup Link" />
+                </div>
+                <p className="text-amber-800">
+                  Have your co-owner open this link to set their password, sign in at <code>/login</code>, and enable
+                  2FA in Owner Settings.
+                </p>
+              </div>
+            )}
+          </div>
+        </Card>
 
         <Card title="Recent Audit Log">
           {logs.length === 0 ? (
