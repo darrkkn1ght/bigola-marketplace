@@ -1,15 +1,20 @@
-# Render Blueprint — Big Ola Marketplace (Monorepo)
-# Services:
-#   1. bigola-api    (Web Service — Fastify API, Free tier eligible for preview, Starter recommended for zero spin-down)
-#   2. bigola-worker (Background Worker — Persistent BullMQ multi-pipeline worker, requires paid Starter+ plan)
-#   3. bigola-web    (Web Service — Next.js frontend, Free tier eligible for preview, Starter recommended for zero spin-down)
+# Strictly Zero-Cost ($0/month) Render Blueprint — Big Ola Marketplace
+# Services deployed ($0/month):
+#   1. bigola-api (Render Web Service, Free plan — Fastify API)
+#   2. bigola-web (Render Static Site, Free — Next.js static export in apps/web/out)
 #
-# External Infrastructure (no paid Render DB/Redis created):
-#   - Neon PostgreSQL: DATABASE_URL (pooled) & DIRECT_URL (direct) supplied via Render dashboard (sync: false)
-#   - Upstash Redis:   REDIS_URL (rediss://...) supplied via Render dashboard (sync: false)
+# External Free-Tier Infrastructure (supplied via Render dashboard, sync: false):
+#   - Neon PostgreSQL (Free): DATABASE_URL (pooled) & DIRECT_URL (direct)
+#   - Upstash Redis (Free):   REDIS_URL (rediss://...)
+#
+# Deferred Paid Service:
+#   - bigola-worker (apps/api/src/worker.ts — BullMQ multi-pipeline background worker)
+#     Render Background Workers require a paid Starter+ plan (no free tier exists).
+#     All BullMQ & multi-pipeline code is preserved in the repo, but queued automated
+#     disbursements CANNOT operate reliably until a persistent worker is deployed.
 #
 # Safety:
-#   - DISBURSEMENT_ENABLED is locked to "false" until explicit production go-live approval.
+#   - DISBURSEMENT_ENABLED is locked to "false".
 #   - Zero secrets are stored in this file; all secrets use sync: false.
 
 services:
@@ -55,47 +60,17 @@ services:
       - key: DISBURSEMENT_ENABLED
         value: "false"
 
-  - type: worker
-    name: bigola-worker
-    runtime: node
-    plan: starter
-    region: frankfurt
-    branch: main
-    buildCommand: npm ci && npm run build --workspace=@bigola/shared && npm run db:generate --workspace=@bigola/api && npm run build --workspace=@bigola/api
-    startCommand: npm run start:worker --workspace=@bigola/api
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: SUPPLIER_PRIMARY_USERNAME
-        value: bigola2823
-      - key: DATABASE_URL
-        sync: false
-      - key: DIRECT_URL
-        sync: false
-      - key: REDIS_URL
-        sync: false
-      - key: QUEUE_PREFIX
-        value: bigola_mp_prod
-      - key: SESSION_SECRET
-        sync: false
-      - key: ENCRYPTION_KEY_HEX
-        sync: false
-      - key: SESSION_TTL_HOURS
-        value: "24"
-      - key: OWNER_REQUIRE_2FA
-        value: "true"
-      - key: DISBURSEMENT_ENABLED
-        value: "false"
-
   - type: web
     name: bigola-web
-    runtime: node
-    plan: free
+    runtime: static
     region: frankfurt
     branch: main
     buildCommand: npm ci && npm run build --workspace=@bigola/shared && npm run build --workspace=@bigola/web
-    startCommand: npm run start --workspace=@bigola/web
-    healthCheckPath: /
+    staticPublishPath: apps/web/out
+    routes:
+      - type: rewrite
+        source: /marketplace/orders/*
+        destination: /marketplace/orders/_/index.html
     envVars:
       - key: NODE_ENV
         value: production
