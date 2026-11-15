@@ -41,6 +41,8 @@ export default function OwnerSettingsPage() {
   const [invitingCoOwner, setInvitingCoOwner] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [invitedEmail, setInvitedEmail] = useState<string | null>(null);
+  const [regeneratingCodes, setRegeneratingCodes] = useState(false);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const { pushToast } = useToast();
@@ -119,6 +121,25 @@ export default function OwnerSettingsPage() {
     }
   }
 
+  async function handleRegenerateRecoveryCodes() {
+    setRegeneratingCodes(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await apiRequest<{ recoveryCodes: string[] }>("/auth/2fa/recovery-codes/regenerate", {
+        method: "POST",
+      });
+      setRecoveryCodes(res.recoveryCodes);
+      setNotice("Generated 8 new one-time 2FA backup codes. Save them now—previous unused codes are replaced.");
+      pushToast({ title: "Backup codes regenerated", tone: "success" });
+      await loadSettings();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRegeneratingCodes(false);
+    }
+  }
+
   return (
     <OwnerShell>
       <div className="space-y-6">
@@ -160,6 +181,41 @@ export default function OwnerSettingsPage() {
                 <span className="text-slate-600">Signed-In Owner</span>
                 <span className="font-medium text-slate-900">{user?.email}</span>
               </div>
+              {user?.mfaEnabled && (
+                <div className="pt-2 border-t border-slate-100 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-slate-500">
+                      Generates 8 fresh one-time backup codes (replaces old ones).
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={regeneratingCodes}
+                      onClick={handleRegenerateRecoveryCodes}
+                    >
+                      {regeneratingCodes ? "Generating..." : "New Backup Codes"}
+                    </Button>
+                  </div>
+                  {recoveryCodes && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-2 text-xs text-amber-900">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold">Your 8 New One-Time Backup Codes:</span>
+                        <CopyButton value={recoveryCodes.join("\n")} label="Copy All" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5 font-mono-tabular">
+                        {recoveryCodes.map((code) => (
+                          <code
+                            key={code}
+                            className="rounded bg-white px-2 py-1 text-center text-[11px] text-slate-800 border border-amber-200"
+                          >
+                            {code}
+                          </code>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </Card>
 

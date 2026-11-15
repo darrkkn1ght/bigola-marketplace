@@ -39,7 +39,10 @@ const loginSchema = z.object({
 });
 
 const totpCodeSchema = z.object({
-  code: z.string().regex(/^\d{6}$/),
+  code: z
+    .string()
+    .transform((v) => v.replace(/[\s-]+/g, ""))
+    .pipe(z.string().regex(/^\d{6}$/)),
 });
 
 const recoveryCodeSchema = z.object({
@@ -459,6 +462,41 @@ export function registerAuthRoutes(
         mfaVerified: true,
         remainingRecoveryCodes: result.remainingHashes.length,
       });
+    }
+  );
+
+  app.post(
+    "/api/v1/auth/2fa/recovery-codes/regenerate",
+    { config: authRateLimit, preHandler: [deps.authenticate] },
+    async (request, reply) => {
+      const auth = request.auth!;
+      if (!auth.mfaVerified) {
+        return reply.code(403).send({ error: "Complete 2FA verification before regenerating recovery codes." });
+      }
+      const user = await deps.authStore.findUserById(auth.userId);
+      if (!user?.mfaEnabled || !user.encryptedTotpSecret) {
+        return reply.code(400).send({ error: "2FA is not enabled for this user." });
+      }
+
+      const recoveryCodes = generateRecoveryCodes(8);
+      const recoveryCodeHashes = recoveryCodes.map((c) => hashRecoveryCode(c, deps.sessionSecret));
+
+      await deps.authStore.updateUserMfa(user.id, {
+        encryptedTotpSecret: user.encryptedTotpSecret,
+        mfaEnabled: true,
+        recoveryCodeHashes,
+      });
+
+      await deps.audit.record({
+        actorUserId: user.id,
+        actionType: "USER_2FA_RECOVERY_CODES_REGENERATED",
+        targetEntity: "USER",
+        targetId: user.id,
+        afterState: { recoveryCodeCount: recoveryCodes.length },
+        ipAddress: request.ip,
+      });
+
+      return reply.code(200).send({ recoveryCodes });
     }
   );
 

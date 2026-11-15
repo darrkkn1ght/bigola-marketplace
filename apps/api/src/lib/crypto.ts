@@ -136,7 +136,7 @@ export function verifyTotpCode(
   secret: string,
   code: string,
   timestampMs = Date.now(),
-  windowSteps = 1
+  windowSteps = 2
 ): boolean {
   if (!/^\d{6}$/.test(code)) {
     return false;
