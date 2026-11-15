@@ -283,6 +283,7 @@ export function registerAuthRoutes(
         partnerDisplayName,
         partnerCanVerifyPayments,
       },
+      csrfToken: request.cookies?.[CSRF_COOKIE_NAME] ?? null,
     });
   });
 

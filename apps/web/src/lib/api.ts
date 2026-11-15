@@ -8,7 +8,11 @@ function getCsrfToken(): string | undefined {
   const match = document.cookie.match(/(?:^|;\s*)bigola_csrf=([^;]+)/);
   if (match) return decodeURIComponent(match[1]);
   try {
-    return window.sessionStorage.getItem(CSRF_STORAGE_KEY) || undefined;
+    return (
+      window.localStorage.getItem(CSRF_STORAGE_KEY) ||
+      window.sessionStorage.getItem(CSRF_STORAGE_KEY) ||
+      undefined
+    );
   } catch {
     return undefined;
   }
@@ -18,8 +22,10 @@ function setStoredCsrfToken(token: string | null): void {
   if (typeof window === "undefined") return;
   try {
     if (token) {
+      window.localStorage.setItem(CSRF_STORAGE_KEY, token);
       window.sessionStorage.setItem(CSRF_STORAGE_KEY, token);
     } else {
+      window.localStorage.removeItem(CSRF_STORAGE_KEY);
       window.sessionStorage.removeItem(CSRF_STORAGE_KEY);
     }
   } catch {
@@ -53,7 +59,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   if (!res.ok) {
     throw new Error(data.error || `Request failed (${res.status})`);
   }
-  if (normalizedPath === "/auth/login" && typeof data?.csrfToken === "string") {
+  if (typeof data?.csrfToken === "string" && data.csrfToken.length > 0) {
     setStoredCsrfToken(data.csrfToken);
   } else if (normalizedPath === "/auth/logout") {
     setStoredCsrfToken(null);
