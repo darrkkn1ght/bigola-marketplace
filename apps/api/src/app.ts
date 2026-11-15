@@ -61,6 +61,8 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
   await app.register(cors, {
     origin: deps.env.allowedOrigins,
     credentials: true,
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token", "Idempotency-Key"],
   });
 
   const audit = new AuditLogger(deps.auditStore);
