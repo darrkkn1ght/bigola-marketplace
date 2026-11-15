@@ -189,10 +189,10 @@ export default function OwnerPartnersPage() {
     setError(null);
     setNotice(null);
     try {
-      await apiRequest("/owner/bank-accounts/propose", {
+      const res = await apiRequest<{ direct?: boolean }>("/owner/bank-accounts/propose", {
         method: "POST",
         body: JSON.stringify({
-          ownerPartnerId: bankOwnerPartnerId,
+          ownerPartnerId: bankOwnerPartnerId || undefined,
           actionType: bankActionType,
           receivingBankAccountId: bankActionType === "CREATE" ? undefined : targetBankAccountId,
           proposedData:
@@ -208,8 +208,13 @@ export default function OwnerPartnersPage() {
           reason: bankReason.trim(),
         }),
       });
-      setNotice("OPay proposal submitted. Account-holding Partner must confirm before it takes effect.");
-      pushToast({ title: "OPay proposal submitted", tone: "success" });
+      if (res.direct) {
+        setNotice("OPay receiving account saved and activated.");
+        pushToast({ title: "OPay account activated", tone: "success" });
+      } else {
+        setNotice("OPay proposal submitted. Account-holding Partner must confirm before it takes effect.");
+        pushToast({ title: "OPay proposal submitted", tone: "success" });
+      }
       setOpayOpen(false);
       setBankReason("");
       setAccountNumber("");
@@ -495,14 +500,13 @@ export default function OwnerPartnersPage() {
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">Account-Holding Partner</label>
+            <label className="block text-xs font-medium text-slate-700 mb-1">Account-Holding Partner (Optional)</label>
             <select
-              required
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
               value={bankOwnerPartnerId}
               onChange={(e) => setBankOwnerPartnerId(e.target.value)}
             >
-              <option value="">Select Partner</option>
+              <option value="">Owner-Managed (Activate Immediately)</option>
               {partners.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.displayName} ({p.referralCode})
@@ -581,7 +585,7 @@ export default function OwnerPartnersPage() {
             />
           </div>
           <Button type="submit" variant="owner" className="w-full">
-            Submit Proposal for Partner Confirmation
+            {bankOwnerPartnerId ? "Submit Proposal for Partner Confirmation" : "Save & Activate OPay Account"}
           </Button>
         </form>
       </SlideOver>

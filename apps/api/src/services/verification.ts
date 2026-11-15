@@ -129,6 +129,133 @@ export class VerificationService {
     return { accounts, changeRequests: requests };
   }
 
+  async setOwnerBankAccount(input: {
+    actorUserId: string;
+    actionType: "CREATE" | "UPDATE" | "DEACTIVATE";
+    receivingBankAccountId?: string;
+    proposedData: {
+      bankName?: string;
+      bankCode?: string;
+      accountNumber?: string;
+      accountName?: string;
+      isDefault?: boolean;
+      isActive?: boolean;
+    };
+    reason: string;
+    ipAddress?: string;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      if (input.actionType === "CREATE") {
+        if (!input.proposedData.bankName || !input.proposedData.accountNumber || !input.proposedData.accountName) {
+          throw new VerificationError(
+            400,
+            "MISSING_BANK_FIELDS",
+            "bankName, accountNumber, and accountName are required."
+          );
+        }
+        const makeDefault = input.proposedData.isDefault ?? true;
+        if (makeDefault) {
+          await tx.receivingBankAccount.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
+        }
+        const account = await tx.receivingBankAccount.create({
+          data: {
+            bankName: input.proposedData.bankName.trim(),
+            bankCode: input.proposedData.bankCode?.trim() || null,
+            accountNumber: input.proposedData.accountNumber.trim(),
+            accountName: input.proposedData.accountName.trim(),
+            ownerPartnerId: null,
+            isActive: input.proposedData.isActive ?? true,
+            isDefault: makeDefault,
+            createdById: input.actorUserId,
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            actorUserId: input.actorUserId,
+            actionType: "OWNER_BANK_ACCOUNT_CREATED",
+            targetEntity: "receiving_bank_accounts",
+            targetId: account.id,
+            afterState: {
+              bankName: account.bankName,
+              accountNumber: account.accountNumber,
+              accountName: account.accountName,
+              isDefault: account.isDefault,
+            },
+            reason: input.reason,
+            ipAddress: input.ipAddress,
+          },
+        });
+        return account;
+      }
+
+      if (!input.receivingBankAccountId) {
+        throw new VerificationError(400, "MISSING_BANK_ACCOUNT_ID", "receivingBankAccountId is required.");
+      }
+      const existing = await tx.receivingBankAccount.findUnique({
+        where: { id: input.receivingBankAccountId },
+      });
+      if (!existing) {
+        throw new VerificationError(404, "BANK_ACCOUNT_NOT_FOUND", "Receiving bank account not found.");
+      }
+      if (existing.ownerPartnerId !== null) {
+        throw new VerificationError(
+          403,
+          "DUAL_CONTROL_REQUIRED",
+          "Partner-owned bank accounts require Partner confirmation. Select the account-holding Partner."
+        );
+      }
+
+      const makeDefault = input.actionType === "DEACTIVATE" ? false : (input.proposedData.isDefault ?? existing.isDefault);
+      if (makeDefault) {
+        await tx.receivingBankAccount.updateMany({
+          where: { isDefault: true, id: { not: existing.id } },
+          data: { isDefault: false },
+        });
+      }
+
+      const account = await tx.receivingBankAccount.update({
+        where: { id: existing.id },
+        data:
+          input.actionType === "DEACTIVATE"
+            ? { isActive: false, isDefault: false }
+            : {
+                bankName: input.proposedData.bankName?.trim() ?? existing.bankName,
+                bankCode: input.proposedData.bankCode !== undefined ? input.proposedData.bankCode.trim() || null : existing.bankCode,
+                accountNumber: input.proposedData.accountNumber?.trim() ?? existing.accountNumber,
+                accountName: input.proposedData.accountName?.trim() ?? existing.accountName,
+                isDefault: makeDefault,
+                isActive: input.proposedData.isActive ?? existing.isActive,
+              },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorUserId: input.actorUserId,
+          actionType: input.actionType === "DEACTIVATE" ? "OWNER_BANK_ACCOUNT_DEACTIVATED" : "OWNER_BANK_ACCOUNT_UPDATED",
+          targetEntity: "receiving_bank_accounts",
+          targetId: account.id,
+          beforeState: {
+            bankName: existing.bankName,
+            accountNumber: existing.accountNumber,
+            accountName: existing.accountName,
+            isActive: existing.isActive,
+            isDefault: existing.isDefault,
+          },
+          afterState: {
+            bankName: account.bankName,
+            accountNumber: account.accountNumber,
+            accountName: account.accountName,
+            isActive: account.isActive,
+            isDefault: account.isDefault,
+          },
+          reason: input.reason,
+          ipAddress: input.ipAddress,
+        },
+      });
+      return account;
+    }, { maxWait: 15000, timeout: 30000 });
+  }
+
   async proposeBankAccountChange(input: {
     actorUserId: string;
     actorRole: UserRole;

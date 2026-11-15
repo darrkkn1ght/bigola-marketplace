@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import {
   AccountTokenType,
+  CustomerCategory,
   GameAccountHealth,
   InventoryDiscrepancyStatus,
   OrderChannel,
@@ -13,7 +14,12 @@ import {
   UserRole,
 } from "@prisma/client";
 import { z } from "zod";
-import { normalizeEmail, Permission, PRIMARY_SUPPLIER_USERNAME } from "@bigola/shared";
+import {
+  normalizeEmail,
+  normalizeLagoslifeUsername,
+  Permission,
+  PRIMARY_SUPPLIER_USERNAME,
+} from "@bigola/shared";
 import type { AuditLogger } from "../lib/audit.js";
 import { generateOpaqueToken, hashPassword, hashSessionToken } from "../lib/crypto.js";
 import type { PlatformStore } from "../lib/repositories.js";
@@ -33,7 +39,7 @@ const updatePartnerVerificationSchema = z.object({
 });
 
 const proposeOwnerBankChangeSchema = z.object({
-  ownerPartnerId: z.string().uuid(),
+  ownerPartnerId: z.string().uuid().optional(),
   actionType: z.enum(["CREATE", "UPDATE", "DEACTIVATE"]),
   receivingBankAccountId: z.string().uuid().optional(),
   proposedData: z.object({
@@ -129,11 +135,13 @@ const allocateLogicalReserveSchema = z.object({
 });
 
 const createOwnerOrderSchema = z.object({
-  customerId: z.string().uuid(),
+  customerId: z.string().uuid().optional(),
   orderType: z.enum(["BULK", "RETAIL"]).default("BULK"),
   gameAmount: z.string().regex(/^\d+$/).optional(),
   packageId: z.string().min(1).max(64).optional(),
   recipientLagoslifeUsername: z.string().min(2).max(60),
+  markPrePaid: z.boolean().optional(),
+  reason: z.string().min(3).max(500).optional(),
   idempotencyKey: z.string().min(8).max(128).optional(),
 });
 
@@ -972,19 +980,88 @@ export function registerOwnerRoutes(
       const idempotencyKey = headerKey ?? parsed.data.idempotencyKey;
 
       try {
+        let resolvedCustomerId = parsed.data.customerId;
+        if (!resolvedCustomerId) {
+          if (!deps.prisma) {
+            return reply.code(400).send({ error: "customerId is required." });
+          }
+          const normalizedRecipient = normalizeLagoslifeUsername(parsed.data.recipientLagoslifeUsername);
+          const existingCustomer = await deps.prisma.customer.findFirst({
+            where: { lagoslifeUsername: normalizedRecipient },
+            select: { id: true },
+          });
+          if (existingCustomer) {
+            resolvedCustomerId = existingCustomer.id;
+          } else {
+            const placeholderHash = await hashPassword(crypto.randomBytes(24).toString("hex"));
+            const walkInEmail = `walkin+${normalizedRecipient.toLowerCase().replace(/[^a-z0-9._-]/g, "")}.${crypto.randomBytes(3).toString("hex")}@offline.bigola.local`;
+            const walkIn = await deps.prisma.$transaction(async (tx) => {
+              const u = await tx.user.create({
+                data: {
+                  email: walkInEmail,
+                  passwordHash: placeholderHash,
+                  role: UserRole.CUSTOMER,
+                  isActive: true,
+                },
+                select: { id: true },
+              });
+              return tx.customer.create({
+                data: {
+                  userId: u.id,
+                  fullName: normalizedRecipient,
+                  lagoslifeUsername: normalizedRecipient,
+                  category: CustomerCategory.CATEGORY_B_BIGOLA,
+                },
+                select: { id: true },
+              });
+            });
+            resolvedCustomerId = walkIn.id;
+          }
+        }
+
         const result = await orderService.createOrder({
           actorUserId: request.auth!.userId,
           channel: OrderChannel.OFFLINE_OWNER,
-          customerId: parsed.data.customerId,
+          customerId: resolvedCustomerId,
           orderType: parsed.data.orderType as OrderType,
           gameAmount: parsed.data.gameAmount ? BigInt(parsed.data.gameAmount) : undefined,
           packageId: parsed.data.packageId,
           recipientLagoslifeUsername: parsed.data.recipientLagoslifeUsername,
           idempotencyKey,
         });
+
+        let finalOrder = result.order;
+        if (
+          parsed.data.markPrePaid &&
+          deps.prisma &&
+          finalOrder.status === OrderStatus.AWAITING_PAYMENT
+        ) {
+          finalOrder = await deps.prisma.order.update({
+            where: { id: finalOrder.id },
+            data: {
+              status: OrderStatus.READY_FOR_FULFILMENT,
+              verifiedGrossFiatKobo: finalOrder.fiatAmountKobo,
+            },
+            include: { reservations: true },
+          });
+          await deps.audit.record({
+            actorUserId: request.auth!.userId,
+            actionType: "OWNER_PREPAID_ORDER_RECORDED",
+            targetEntity: "ORDER",
+            targetId: finalOrder.id,
+            afterState: {
+              orderNumber: finalOrder.orderNumber,
+              recipientLagoslifeUsername: finalOrder.recipientLagoslifeUsername,
+              gameAmountRequested: finalOrder.gameAmountRequested.toString(),
+            },
+            reason: parsed.data.reason?.trim() || "Pre-paid direct owner order",
+            ipAddress: request.ip,
+          });
+        }
+
         return reply.code(result.idempotentReplay ? 200 : 201).send({
           idempotentReplay: result.idempotentReplay,
-          order: serializeOrder(result.order),
+          order: serializeOrder(finalOrder),
         });
       } catch (err) {
         if (err instanceof OrderError) {
@@ -1114,6 +1191,17 @@ export function registerOwnerRoutes(
         return reply.code(400).send({ error: "Invalid bank account proposal.", issues: parsed.error.issues });
       }
       try {
+        if (!parsed.data.ownerPartnerId) {
+          const account = await svc.setOwnerBankAccount({
+            actorUserId: request.auth!.userId,
+            actionType: parsed.data.actionType,
+            receivingBankAccountId: parsed.data.receivingBankAccountId,
+            proposedData: parsed.data.proposedData,
+            reason: parsed.data.reason,
+            ipAddress: request.ip,
+          });
+          return reply.code(201).send({ account, direct: true });
+        }
         const req = await svc.proposeBankAccountChange({
           actorUserId: request.auth!.userId,
           actorRole: request.auth!.role,

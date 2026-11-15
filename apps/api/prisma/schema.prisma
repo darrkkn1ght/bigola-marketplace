@@ -509,14 +509,14 @@ model ReceivingBankAccount {
   bankCode       String?  @map("bank_code")
   accountNumber  String   @map("account_number")
   accountName    String   @map("account_name")
-  ownerPartnerId String   @map("owner_partner_id") @db.Uuid
+  ownerPartnerId String?  @map("owner_partner_id") @db.Uuid
   isActive       Boolean  @default(true) @map("is_active")
   isDefault      Boolean  @default(false) @map("is_default")
   createdById    String   @map("created_by_id") @db.Uuid
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  ownerPartner          Partner                           @relation(fields: [ownerPartnerId], references: [id], onDelete: Restrict)
+  ownerPartner          Partner?                          @relation(fields: [ownerPartnerId], references: [id], onDelete: Restrict)
   createdBy             User                              @relation("BankAccountCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   changeRequests        ReceivingBankAccountChangeRequest[]
   paymentProofs         PaymentProof[]
@@ -532,7 +532,7 @@ model ReceivingBankAccount {
 model ReceivingBankAccountChangeRequest {
   id                     String                         @id @default(uuid()) @db.Uuid
   receivingBankAccountId String?                        @map("receiving_bank_account_id") @db.Uuid
-  ownerPartnerId         String                         @map("owner_partner_id") @db.Uuid
+  ownerPartnerId         String?                        @map("owner_partner_id") @db.Uuid
   requestedByUserId      String                         @map("requested_by_user_id") @db.Uuid
   confirmedByUserId      String?                        @map("confirmed_by_user_id") @db.Uuid
   actionType             String                         @map("action_type")
@@ -544,7 +544,7 @@ model ReceivingBankAccountChangeRequest {
   createdAt              DateTime                       @default(now()) @map("created_at")
 
   receivingBankAccount   ReceivingBankAccount?          @relation(fields: [receivingBankAccountId], references: [id], onDelete: Restrict)
-  ownerPartner           Partner                        @relation(fields: [ownerPartnerId], references: [id], onDelete: Restrict)
+  ownerPartner           Partner?                       @relation(fields: [ownerPartnerId], references: [id], onDelete: Restrict)
   requestedBy            User                           @relation("BankChangeRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
   confirmedBy            User?                          @relation("BankChangeConfirmedBy", fields: [confirmedByUserId], references: [id], onDelete: Restrict)
 

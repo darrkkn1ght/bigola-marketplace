@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
 import { SlideOver } from "@/components/ui/SlideOver";
 import { SkeletonCard } from "@/components/ui/Skeleton";
+import { ONE_TRILLION } from "@bigola/shared";
 import { apiRequest } from "@/lib/api";
 import { formatDateTime, formatNaira, formatTrillions, type BadgeTone } from "@/lib/format";
 
@@ -343,6 +344,14 @@ export default function OwnerOrdersPage() {
   const [refundAmountNaira, setRefundAmountNaira] = useState("");
   const [refundReason, setRefundReason] = useState("");
 
+  // Direct / Pre-Paid Owner Order state
+  const [directOpen, setDirectOpen] = useState(false);
+  const [directRecipient, setDirectRecipient] = useState("");
+  const [directAmountT, setDirectAmountT] = useState("10");
+  const [directPrePaid, setDirectPrePaid] = useState(true);
+  const [directReason, setDirectReason] = useState("");
+  const [directBusy, setDirectBusy] = useState(false);
+
   const loadOrders = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -673,6 +682,7 @@ export default function OwnerOrdersPage() {
     }
   };
 
+
   const handleJobAction = async (
     jobId: string,
     action: "execute" | "pause" | "resume" | "cancel",
@@ -703,6 +713,7 @@ export default function OwnerOrdersPage() {
       setDisbBusy(false);
     }
   };
+
 
   const handleResolveAmbiguousChunk = async (
     jobId: string,
@@ -735,6 +746,7 @@ export default function OwnerOrdersPage() {
     }
   };
 
+
   const handleManualFulfilment = async () => {
     if (!detail || !manualAccountId || !manualAmountBillions || !manualExternalRef) return;
     setDisbBusy(true);
@@ -765,6 +777,7 @@ export default function OwnerOrdersPage() {
     }
   };
 
+
   const handleRequestRefund = async () => {
     if (!detail || !refundAmountNaira || !refundReason) return;
     setDisbBusy(true);
@@ -792,6 +805,44 @@ export default function OwnerOrdersPage() {
     }
   };
 
+
+  const handleCreateDirectOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const numericT = Number(directAmountT);
+    if (!directRecipient.trim() || !Number.isFinite(numericT) || numericT <= 0) {
+      setError("Enter a valid recipient LagosLife username and positive amount in T.");
+      return;
+    }
+    setDirectBusy(true);
+    setError(null);
+    setActionBanner(null);
+    try {
+      const scaledUnits = BigInt(Math.round(numericT * 1000)) * (ONE_TRILLION / BigInt(1000));
+      const res = await apiRequest<{ order: { id: string; orderNumber: string } }>("/owner/orders", {
+        method: "POST",
+        body: JSON.stringify({
+          orderType: "BULK",
+          gameAmount: scaledUnits.toString(),
+          recipientLagoslifeUsername: directRecipient.trim(),
+          markPrePaid: directPrePaid,
+          reason: directReason.trim() || "Pre-paid direct owner send",
+        }),
+      });
+      setDirectOpen(false);
+      setDirectRecipient("");
+      setDirectReason("");
+      setActionBanner(
+        `Created order ${res.order.orderNumber}${directPrePaid ? " (marked Ready for Fulfilment)" : ""}.`
+      );
+      await loadOrders();
+      await loadOrderDetail(res.order.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create direct order.");
+    } finally {
+      setDirectBusy(false);
+    }
+  };
+
   return (
     <OwnerShell>
       <div className="space-y-6">
@@ -805,6 +856,9 @@ export default function OwnerOrdersPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <Button variant="owner" onClick={() => setDirectOpen(true)}>
+              Direct / Pre-Paid Send
+            </Button>
             <Button variant="secondary" onClick={handleRunExpirySweep}>
               Run Expiry Sweep
             </Button>
@@ -1805,6 +1859,66 @@ export default function OwnerOrdersPage() {
               </div>
             </div>
           )}
+        </SlideOver>
+
+        <SlideOver
+          open={directOpen}
+          onClose={() => setDirectOpen(false)}
+          title="Direct / Pre-Paid Send"
+          subtitle="Create an order for someone who already paid without requiring them to order first."
+        >
+          <form onSubmit={handleCreateDirectOrder} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Recipient LagosLife Username
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. player_username"
+                value={directRecipient}
+                onChange={(e) => setDirectRecipient(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Amount to Send (in T, e.g. 10 = 10T, 0.5 = 500B)
+              </label>
+              <input
+                type="number"
+                step="0.001"
+                min="0.001"
+                required
+                value={directAmountT}
+                onChange={(e) => setDirectAmountT(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3.5 py-2 font-mono-tabular text-sm"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-xs text-slate-700">
+              <input
+                type="checkbox"
+                checked={directPrePaid}
+                onChange={(e) => setDirectPrePaid(e.target.checked)}
+              />
+              Already Paid (mark immediately Ready for Fulfilment)
+            </label>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Payment / Audit Note
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Paid via direct transfer before launch"
+                value={directReason}
+                onChange={(e) => setDirectReason(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-sm"
+              />
+            </div>
+            <Button type="submit" variant="owner" className="w-full" disabled={directBusy}>
+              {directBusy ? "Creating..." : "Create & Open for Fulfilment"}
+            </Button>
+          </form>
         </SlideOver>
       </div>
     </OwnerShell>

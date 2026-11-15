@@ -34,7 +34,7 @@ export class AttributionService {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly sessionSecret: string
-  ) {}
+  ) { }
 
   async validateReferralCode(rawCode: string) {
     const code = normalizeReferralCode(rawCode);
@@ -351,20 +351,40 @@ export class AttributionService {
 
       try {
         return await this.prisma.$transaction(async (tx) => {
-          const existingUser = await tx.user.findUnique({ where: { email: normalizedEmail } });
-          if (existingUser) {
-            throw new AttributionError(409, "EMAIL_EXISTS", "A user with this email already exists.");
+          const existingUser = await tx.user.findUnique({
+            where: { email: normalizedEmail },
+            include: { partnerProfile: { select: { id: true } } },
+          });
+
+          if (existingUser?.partnerProfile) {
+            throw new AttributionError(409, "EMAIL_EXISTS", "A partner account with this email already exists.");
+          }
+          if (existingUser && (existingUser.role === UserRole.OWNER || existingUser.role === UserRole.OPS_ADMIN)) {
+            throw new AttributionError(
+              409,
+              "ROLE_CONFLICT",
+              "This email belongs to an Owner/Admin account. Use a separate email (such as a +partner Gmail alias) for a Partner account."
+            );
           }
 
-          const user = await tx.user.create({
-            data: {
-              email: normalizedEmail,
-              phone: normalizedPhone,
-              passwordHash,
-              role: UserRole.PARTNER,
-              mustChangePassword: isInvite,
-            },
-          });
+          const promotedFromCustomer = Boolean(existingUser);
+          const user = existingUser
+            ? await tx.user.update({
+                where: { id: existingUser.id },
+                data: {
+                  role: UserRole.PARTNER,
+                  ...(normalizedPhone && !existingUser.phone ? { phone: normalizedPhone } : {}),
+                },
+              })
+            : await tx.user.create({
+                data: {
+                  email: normalizedEmail,
+                  phone: normalizedPhone,
+                  passwordHash,
+                  role: UserRole.PARTNER,
+                  mustChangePassword: isInvite,
+                },
+              });
 
           const partner = await tx.partner.create({
             data: {
@@ -375,7 +395,7 @@ export class AttributionService {
             },
           });
 
-          if (inviteTokenHash && inviteExpiresAt) {
+          if (!promotedFromCustomer && inviteTokenHash && inviteExpiresAt) {
             await tx.accountActionToken.create({
               data: {
                 userId: user.id,
@@ -398,7 +418,8 @@ export class AttributionService {
                 email: user.email,
                 referralCode: partner.referralCode,
                 displayName: partner.displayName,
-                invitedWithoutPassword: isInvite,
+                invitedWithoutPassword: !promotedFromCustomer && isInvite,
+                promotedFromCustomer,
               },
               ipAddress: input.ipAddress ?? null,
             },
@@ -407,7 +428,7 @@ export class AttributionService {
           return {
             user: { id: user.id, email: user.email, role: user.role },
             partner,
-            ...(rawInviteToken && inviteExpiresAt
+            ...(!promotedFromCustomer && rawInviteToken && inviteExpiresAt
               ? { inviteToken: rawInviteToken, inviteExpiresAt: inviteExpiresAt.toISOString() }
               : {}),
           };
