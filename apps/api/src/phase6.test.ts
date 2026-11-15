@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { CustomerCategory, PrismaClient, UserRole } from "@prisma/client";
-import { loadEnv } from "./config/env.js";
+import { loadIsolatedTestEnv } from "./lib/test-isolation.js";
 import { buildApp } from "./app.js";
 import { createQueueInfrastructure } from "./lib/redis.js";
 import { createPrismaStores } from "./lib/repositories.js";
@@ -17,7 +17,7 @@ const runInfraTests = process.env.RUN_INFRA_TESTS === "true";
 
 describe("Phase 6 Authentication, Provisioning & Gap Endpoints (Neon PostgreSQL)", { skip: !runInfraTests }, () => {
   it("supports Partner invite setup, Owner-controlled password reset, customer profile, and RBAC isolation", async () => {
-    const env = loadEnv();
+    const env = loadIsolatedTestEnv();
     const prisma = new PrismaClient();
     const stores = createPrismaStores(prisma);
     const queues = createQueueInfrastructure(env.REDIS_URL, env.QUEUE_PREFIX);

@@ -13,7 +13,10 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
+    "db:migrate:test": "node scripts/run-isolated.mjs \"npx prisma migrate deploy\"",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed:test": "node scripts/run-isolated.mjs \"npx tsx prisma/seed.ts\"",
+    "test:infra:isolated": "node scripts/run-isolated.mjs \"npx tsx --test src/integration.postgres-redis.test.ts src/phase3.test.ts src/phase4.test.ts src/phase5.test.ts src/phase6.test.ts src/phase7.test.ts\"",
     "bootstrap:owner": "tsx src/scripts/bootstrap-owner.ts"
   },
   "dependencies": {

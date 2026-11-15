@@ -10,7 +10,7 @@ import {
   UserRole,
 } from "@prisma/client";
 import { buildApp } from "./app.js";
-import { loadEnv } from "./config/env.js";
+import { loadIsolatedTestEnv } from "./lib/test-isolation.js";
 import {
   generateTotpCode,
   hashPassword,
@@ -40,7 +40,7 @@ describe("Phase 3 Attribution & Commission Integrity (Neon PostgreSQL)", { skip:
       throw new Error("Refusing Phase 3 integration tests against NODE_ENV=production.");
     }
 
-    const env = loadEnv();
+    const env = loadIsolatedTestEnv();
     const prisma = new PrismaClient();
     const stores = createPrismaStores(prisma);
     const queues = createQueueInfrastructure(env.REDIS_URL, env.QUEUE_PREFIX);

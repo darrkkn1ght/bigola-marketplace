@@ -19,7 +19,7 @@ import {
   SupportTicketPriority,
   UserRole,
 } from "@prisma/client";
-import { loadEnv } from "./config/env.js";
+import { loadIsolatedTestEnv } from "./lib/test-isolation.js";
 import { createPrismaStores } from "./lib/repositories.js";
 import { createQueueInfrastructure, type QueueInfrastructure } from "./lib/redis.js";
 import { buildApp } from "./app.js";
@@ -36,7 +36,7 @@ import { AnalyticsService } from "./services/analytics.js";
 const runInfra = process.env.RUN_INFRA_TESTS === "true";
 
 test("Phase 7 Business Operations & Order Management", { skip: !runInfra }, async (t) => {
-  const env = loadEnv();
+  const env = loadIsolatedTestEnv();
   const prisma = new PrismaClient();
   const stores = createPrismaStores(prisma);
   const queues: QueueInfrastructure = createQueueInfrastructure(env.REDIS_URL, env.QUEUE_PREFIX);

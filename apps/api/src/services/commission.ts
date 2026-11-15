@@ -34,8 +34,12 @@ export class CommissionService {
         const order = await tx.order.findUnique({
           where: { id: orderId },
           include: {
-            paymentProofs: true,
-            commissionRecord: true,
+            paymentProofs: {
+              where: { verificationStatus: ProofVerificationStatus.APPROVED },
+              select: { id: true },
+              take: 1,
+            },
+            commissionRecord: { select: { id: true } },
           },
         });
 
@@ -51,9 +55,7 @@ export class CommissionService {
           );
         }
 
-        const hasApprovedProof = order.paymentProofs.some(
-          (p) => p.verificationStatus === ProofVerificationStatus.APPROVED
-        );
+        const hasApprovedProof = order.paymentProofs.length > 0;
         if (order.status !== OrderStatus.PAYMENT_VERIFIED || !hasApprovedProof) {
           throw new CommissionError(
             400,
@@ -165,7 +167,7 @@ export class CommissionService {
         });
 
         return record;
-      });
+      }, { maxWait: 10000, timeout: 15000 });
     } catch (err) {
       if (err instanceof CommissionError) throw err;
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
@@ -213,7 +215,7 @@ export class CommissionService {
       });
 
       return updated;
-    });
+    }, { maxWait: 10000, timeout: 15000 });
   }
 
   async reverseCommission(commissionRecordId: string, ownerUserId: string, reason: string) {
@@ -257,7 +259,7 @@ export class CommissionService {
       });
 
       return updated;
-    });
+    }, { maxWait: 10000, timeout: 15000 });
   }
 
   /**

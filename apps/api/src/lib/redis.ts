@@ -209,10 +209,23 @@ export function createBullMqWorker(
   options?: { concurrency?: number; lockDuration?: number }
 ): Worker {
   const connection = createBullMqConnection(redisUrl);
-  return new Worker(queueName, processor, {
+  const worker = new Worker(queueName, processor, {
     connection,
     prefix,
     concurrency: options?.concurrency ?? 2,
     ...(options?.lockDuration ? { lockDuration: options.lockDuration } : {}),
   });
+  const originalClose = worker.close.bind(worker);
+  worker.close = async (force?: boolean) => {
+    try {
+      await originalClose(force);
+    } finally {
+      if (connection.status !== "end") {
+        await connection.quit().catch(() => {
+          connection.disconnect();
+        });
+      }
+    }
+  };
+  return worker;
 }

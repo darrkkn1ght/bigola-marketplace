@@ -11,7 +11,7 @@ import {
 } from "@prisma/client";
 import { ONE_TRILLION } from "@bigola/shared";
 import { buildApp } from "./app.js";
-import { loadEnv } from "./config/env.js";
+import { loadIsolatedTestEnv } from "./lib/test-isolation.js";
 import { generateTotpCode, hashPassword } from "./lib/crypto.js";
 import { createQueueInfrastructure } from "./lib/redis.js";
 import { createPrismaStores } from "./lib/repositories.js";
@@ -30,7 +30,7 @@ describe("Phase 5 Independent Payment Verification & OPay Reconciliation (Neon P
       throw new Error("Refusing Phase 5 integration tests against NODE_ENV=production.");
     }
 
-    const env = loadEnv();
+    const env = loadIsolatedTestEnv();
     assert.equal(env.DISBURSEMENT_ENABLED, false);
     const prisma = new PrismaClient();
     const stores = createPrismaStores(prisma);
