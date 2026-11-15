@@ -931,11 +931,13 @@ test("Stage 9.2: Two-stage /api/v1/health heartbeat & DISBURSEMENT_ENABLED=false
       allocations: [{ slotCode: "MAIN_TREASURY", amount: 50_000_000_000n }],
       reason: "Test disabled guard",
     });
-    await assert.rejects(
-      () => harness.disbursementService.processJobStepForWorker({ jobId: job.id, actorUserId: harness.ownerId }),
-      /DISBURSEMENT_ENABLED=false|disabled/i
-    );
-    assert.equal(harness.sendCalls.length, 0);
+    const stepRes = await harness.disbursementService.processJobStepForWorker({
+      jobId: job.id,
+      actorUserId: harness.ownerId,
+    });
+    assert.equal(stepRes.job, null);
+    assert.equal(stepRes.nextDelayMs, null);
+    assert.equal(harness.getMetrics().sendLog.length, 0);
   } finally {
     if (app) {
       await app.close().catch(() => undefined);
