@@ -864,6 +864,14 @@ test("Stage 9: Multi-Pipeline Concurrency, Worker Crash Recovery, Failure Isolat
       headers: { authorization: `Bearer ${harness.customerToken}` },
     });
     assert.equal(custPipe.statusCode, 403);
+
+    // 6. Two-Stage Deployment: /api/v1/health worker heartbeat & DISBURSEMENT_ENABLED=false guard
+    const healthStage1 = await app.inject({ method: "GET", url: "/api/v1/health" });
+    assert.equal(healthStage1.statusCode, 200);
+    const h1 = healthStage1.json();
+    assert.equal(h1.disbursementEnabled, true); // this harness enables disbursement; test disabled harness below
+    assert.equal(h1.worker.alive, false);
+    assert.ok(h1.disbursementQueue);
   } finally {
     if (app) {
       await app.close().catch(() => undefined);
@@ -871,5 +879,67 @@ test("Stage 9: Multi-Pipeline Concurrency, Worker Crash Recovery, Failure Isolat
     if (queues) {
       await queues.close().catch(() => undefined);
     }
+  }
+});
+
+test("Stage 9.2: Two-stage /api/v1/health heartbeat & DISBURSEMENT_ENABLED=false worker guard", async () => {
+  const harness = await createStage9Harness({ disbursementEnabled: false });
+  let heartbeatAlive = false;
+  const queues = createQueueInfrastructure(undefined, "test_two_stage");
+  queues.getWorkerHeartbeat = async () => ({
+    alive: heartbeatAlive,
+    service: heartbeatAlive ? "bigola-marketplace-worker" : null,
+    lastHeartbeatAt: heartbeatAlive ? new Date().toISOString() : null,
+    concurrency: heartbeatAlive ? 5 : null,
+    disbursementEnabled: false,
+  });
+
+  let app: any;
+  try {
+    app = await buildApp({
+      env: harness.env,
+      authStore: harness.authStore,
+      auditStore: harness.auditStore,
+      platformStore: harness.platformStore,
+      queues,
+      checkDb: async () => true,
+      disbursementService: harness.disbursementService,
+    });
+
+    // Stage 1 ($0/mo): no worker running, DISBURSEMENT_ENABLED=false
+    const h1Res = await app.inject({ method: "GET", url: "/api/v1/health" });
+    assert.equal(h1Res.statusCode, 200);
+    const h1 = h1Res.json();
+    assert.equal(h1.disbursementEnabled, false);
+    assert.equal(h1.worker.alive, false);
+
+    // Stage 2 ($7/mo worker attached): heartbeat appears in /api/v1/health
+    heartbeatAlive = true;
+    const h2Res = await app.inject({ method: "GET", url: "/api/v1/health" });
+    assert.equal(h2Res.statusCode, 200);
+    const h2 = h2Res.json();
+    assert.equal(h2.worker.alive, true);
+    assert.equal(h2.worker.service, "bigola-marketplace-worker");
+    assert.equal(h2.worker.concurrency, 5);
+
+    // Worker/disbursement guard: DISBURSEMENT_ENABLED=false blocks execution before any LagosLife /api/send
+    const order = harness.createReadyOrder([{ slotCode: "MAIN_TREASURY", amount: 50_000_000_000n }]);
+    const job = await harness.disbursementService.authorizeDisbursementJob({
+      orderId: order.id,
+      actorUserId: harness.ownerId,
+      actorRole: UserRole.OWNER,
+      allocations: [{ slotCode: "MAIN_TREASURY", amount: 50_000_000_000n }],
+      reason: "Test disabled guard",
+    });
+    await assert.rejects(
+      () => harness.disbursementService.processJobStepForWorker({ jobId: job.id, actorUserId: harness.ownerId }),
+      /DISBURSEMENT_ENABLED=false|disabled/i
+    );
+    assert.equal(harness.sendCalls.length, 0);
+  } finally {
+    if (app) {
+      await app.close().catch(() => undefined);
+    }
+    await queues.close().catch(() => undefined);
   }
 });
