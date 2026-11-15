@@ -29,9 +29,9 @@ export function createAuthMiddleware(opts: {
   authStore: AuthStore;
   sessionSecret: string;
   ownerRequire2fa: boolean;
-  webBaseUrl: string;
+  allowedOrigins: string[];
 }) {
-  const allowedOrigin = new URL(opts.webBaseUrl).origin;
+  const allowedOriginSet = new Set(opts.allowedOrigins);
 
   async function authenticate(request: FastifyRequest, reply: FastifyReply) {
     const cookieToken = request.cookies?.[SESSION_COOKIE_NAME];
@@ -48,7 +48,7 @@ export function createAuthMiddleware(opts: {
     // Enforce Origin + double-submit CSRF token on cookie-authenticated state-changing requests
     if (authTransport === "cookie" && MUTATING_METHODS.has(request.method)) {
       const origin = request.headers.origin;
-      if (origin && origin !== allowedOrigin) {
+      if (origin && !allowedOriginSet.has(origin)) {
         return reply.code(403).send({ error: "CSRF validation failed: origin mismatch." });
       }
       const csrfCookie = request.cookies?.[CSRF_COOKIE_NAME];

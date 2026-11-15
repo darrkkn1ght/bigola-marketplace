@@ -3,11 +3,29 @@ import { loadEnv } from "./config/env.js";
 import { prisma } from "./lib/prisma.js";
 import { createQueueInfrastructure } from "./lib/redis.js";
 import { createPrismaStores } from "./lib/repositories.js";
+import { AttributionService } from "./services/attribution.js";
+import { CommissionService } from "./services/commission.js";
+import { DisbursementService } from "./services/disbursement.js";
+import { InventoryService } from "./services/inventory.js";
+import { NotificationService } from "./services/notification.js";
+import { OrderService } from "./services/order.js";
+import { VerificationService } from "./services/verification.js";
 
 async function start() {
   const env = loadEnv();
   const stores = createPrismaStores(prisma);
   const queues = createQueueInfrastructure(env.REDIS_URL, env.QUEUE_PREFIX);
+  const attributionService = new AttributionService(prisma, env.SESSION_SECRET);
+  const orderService = new OrderService(prisma);
+  const inventoryService = new InventoryService(prisma, {
+    encryptionKeyHex: env.ENCRYPTION_KEY_HEX,
+  });
+  const disbursementService = new DisbursementService(prisma, env.ENCRYPTION_KEY_HEX, undefined, {
+    disbursementEnabled: env.DISBURSEMENT_ENABLED,
+  });
+  const commissionService = new CommissionService(prisma);
+  const notificationService = new NotificationService(prisma);
+  const verificationService = new VerificationService(prisma, commissionService, notificationService);
 
   const app = await buildApp({
     env,
@@ -15,6 +33,13 @@ async function start() {
     auditStore: stores.auditStore,
     platformStore: stores.platformStore,
     queues,
+    prisma,
+    attributionService,
+    orderService,
+    inventoryService,
+    disbursementService,
+    verificationService,
+    notificationService,
     async checkDb() {
       try {
         await prisma.$queryRaw`SELECT 1`;

@@ -468,5 +468,18 @@ describe("Auth, RBAC, 2FA Enforcement & Audit Logging", () => {
 
     await app.close();
   });
+
+  it("supports Render PORT fallback and multi-origin CORS_ORIGINS normalization", () => {
+    const env = loadEnv({
+      NODE_ENV: "test",
+      PORT: "10000",
+      CORS_ORIGINS: "bigola-web.onrender.com, https://app.bigola.ng/",
+    });
+    assert.equal(env.API_PORT, 10000);
+    assert.deepEqual(env.allowedOrigins, [
+      "https://bigola-web.onrender.com",
+      "https://app.bigola.ng",
+    ]);
+  });
 });
 

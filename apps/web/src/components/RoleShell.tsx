@@ -2,7 +2,7 @@ import Link from "next/link";
 import { PRIMARY_SUPPLIER_USERNAME } from "@bigola/shared";
 
 interface RoleShellProps {
-  surface: "Customer Marketplace" | "Partner Portal" | "Owner Console";
+  surface: "Customer Marketplace" | "Partner Portal" | "Owner Console" | "Verification Desk";
   accentClass: string;
   children: React.ReactNode;
 }
@@ -27,6 +27,9 @@ export function RoleShell({ surface, accentClass, children }: RoleShellProps) {
             </Link>
             <Link href="/partner" className="hover:text-white transition-colors">
               Partner
+            </Link>
+            <Link href="/verification" className="hover:text-white transition-colors">
+              Verification
             </Link>
             <Link href="/owner" className="hover:text-white transition-colors">
               Owner

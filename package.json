@@ -20,10 +20,15 @@
     "db:generate": "npm run db:generate --workspace=@bigola/api",
     "db:migrate": "node -e \"try{process.loadEnvFile('.env')}catch{}; require('child_process').execSync('npm run db:migrate --workspace=@bigola/api', { stdio: 'inherit', env: process.env });\"",
     "db:seed": "node -e \"try{process.loadEnvFile('.env')}catch{}; require('child_process').execSync('npm run db:seed --workspace=@bigola/api', { stdio: 'inherit', env: process.env });\"",
+    "bootstrap:owner": "node -e \"try{process.loadEnvFile('.env')}catch{}; require('child_process').execSync('npm run bootstrap:owner --workspace=@bigola/api', { stdio: 'inherit', env: process.env });\"",
     "health:remote": "node -e \"try{process.loadEnvFile('.env')}catch{}; const url = process.env.API_HEALTH_URL || 'http://localhost:4000/api/v1/health'; fetch(url).then(async r => { console.log(r.status, await r.text()); if(!r.ok) process.exit(1); }).catch(e => { console.error(e); process.exit(1); });\"",
     "infra:up": "docker compose up -d --wait",
     "infra:down": "docker compose down",
     "infra:ps": "docker compose ps",
     "infra:logs": "docker compose logs -f"
+  },
+  "dependencies": {
+    "@neon/config": "^1.14.0",
+    "@neon/env": "^2.1.3"
   }
 }

@@ -13,3 +13,5 @@ coverage/
 *.key
 *.p12
 sessions/
+.neon
+OWNER_CREDENTIALS_AND_DEMO_GUIDE.local.md

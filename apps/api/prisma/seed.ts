@@ -4,6 +4,10 @@ import {
   TARGET_RESERVE_PER_ACCOUNT,
   DEFAULT_BULK_PRICE_KOBO_PER_TRILLION,
   DEFAULT_BULK_MIN_GAME_AMOUNT,
+  DEFAULT_ORDER_EXPIRY_MINUTES,
+  DEFAULT_INVENTORY_MAX_AGE_MINUTES,
+  DEFAULT_MAX_ACTIVE_UNPAID_ORDERS_PER_CUSTOMER,
+  DEFAULT_MAX_RESERVED_GAME_AMOUNT_PER_CUSTOMER,
 } from "@bigola/shared";
 
 const prisma = new PrismaClient();
@@ -92,8 +96,22 @@ async function main() {
     },
     {
       key: "order_expiry_policy",
-      value: { status: "UNCONFIGURED", unpaidExpiryMinutes: null },
-      description: "Unpaid order expiry window — pending Owner configuration.",
+      value: { status: "CONFIGURED", unpaidExpiryMinutes: DEFAULT_ORDER_EXPIRY_MINUTES },
+      description: "Configurable unpaid order expiry window (default: 30 minutes).",
+    },
+    {
+      key: "inventory_freshness_policy",
+      value: { status: "CONFIGURED", maxAgeMinutes: DEFAULT_INVENTORY_MAX_AGE_MINUTES },
+      description: "Maximum age in minutes before synced GameAccount balances are marked STALE and excluded from reservations.",
+    },
+    {
+      key: "order_hoarding_policy",
+      value: {
+        status: "CONFIGURED",
+        maxActiveUnpaidOrdersPerCustomer: DEFAULT_MAX_ACTIVE_UNPAID_ORDERS_PER_CUSTOMER,
+        maxReservedGameAmountPerCustomer: DEFAULT_MAX_RESERVED_GAME_AMOUNT_PER_CUSTOMER.toString(),
+      },
+      description: "Configurable per-customer limits for active unpaid orders and total reserved inventory.",
     },
     {
       key: "partner_payout_policy",

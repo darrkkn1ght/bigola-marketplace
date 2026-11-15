@@ -2,9 +2,11 @@ import { z } from "zod";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  API_PORT: z.coerce.number().int().positive().default(4000),
+  PORT: z.coerce.number().int().positive().optional(),
+  API_PORT: z.coerce.number().int().positive().optional(),
   API_HOST: z.string().default("0.0.0.0"),
   WEB_BASE_URL: z.string().url().default("http://localhost:3000"),
+  CORS_ORIGINS: z.string().optional(),
   DATABASE_URL: z.string().min(1).default("postgresql://bigola:dev@localhost:5432/bigola_marketplace?schema=public"),
   DIRECT_URL: z.string().min(1).optional(),
   REDIS_URL: z.string().optional(),
@@ -25,7 +27,19 @@ const envSchema = z.object({
     .transform((v) => v === "true"),
 });
 
-export type AppEnv = z.infer<typeof envSchema>;
+export type AppEnv = Omit<z.infer<typeof envSchema>, "API_PORT" | "PORT"> & {
+  API_PORT: number;
+  allowedOrigins: string[];
+};
+
+function normalizeOrigin(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return new URL(trimmed).origin;
+  }
+  return new URL(`https://${trimmed}`).origin;
+}
 
 export function loadEnv(source: Record<string, string | undefined> = process.env): AppEnv {
   const parsed = envSchema.safeParse(source);
@@ -39,6 +53,14 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
   ) {
     throw new Error("Production environment cannot use default development secrets.");
   }
-  return parsed.data;
-}
 
+  const rawOrigins = parsed.data.CORS_ORIGINS
+    ? parsed.data.CORS_ORIGINS.split(",").map(normalizeOrigin).filter(Boolean)
+    : [new URL(parsed.data.WEB_BASE_URL).origin];
+
+  return {
+    ...parsed.data,
+    API_PORT: parsed.data.API_PORT ?? parsed.data.PORT ?? 4000,
+    allowedOrigins: Array.from(new Set(rawOrigins)),
+  };
+}

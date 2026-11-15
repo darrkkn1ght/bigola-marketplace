@@ -8,6 +8,19 @@ export const DEFAULT_BULK_PRICE_KOBO_PER_TRILLION = 100_000n; // ₦1,000.00 in 
 export const DEFAULT_BULK_MIN_GAME_AMOUNT = 10_000_000_000_000n; // 10 Trillion
 export const ONE_TRILLION = 1_000_000_000_000n;
 
+export const DEFAULT_ORDER_EXPIRY_MINUTES = 30;
+export const DEFAULT_INVENTORY_MAX_AGE_MINUTES = 60;
+export const DEFAULT_MAX_ACTIVE_UNPAID_ORDERS_PER_CUSTOMER = 3;
+export const DEFAULT_MAX_RESERVED_GAME_AMOUNT_PER_CUSTOMER = 500_000_000_000_000n; // 500 Trillion
+
+export interface RetailPackageConfig {
+  id: string;
+  name: string;
+  gameAmount: string; // integer string in-game Naira
+  fiatKobo: string; // integer string kobo
+  enabled: boolean;
+}
+
 export type CustomerCategory = "CATEGORY_A_PARTNER" | "CATEGORY_B_BIGOLA";
 
 export type CommissionRuleInput =
@@ -110,5 +123,61 @@ export function calculateBulkOrderFiatKobo(
     throw new Error("Bulk orders must be in whole 1 Trillion increments.");
   }
   return (gameAmount / ONE_TRILLION) * priceKoboPerTrillion;
+}
+
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+export function normalizePhone(phone: string): string {
+  const digits = phone.replace(/[^\d+]/g, "");
+  if (digits.startsWith("0") && digits.length === 11) {
+    return `+234${digits.slice(1)}`;
+  }
+  if (digits.startsWith("234") && digits.length === 13) {
+    return `+${digits}`;
+  }
+  return digits.startsWith("+") ? digits : `+${digits}`;
+}
+
+export function normalizeLagoslifeUsername(username: string): string {
+  return username.trim().replace(/^@+/, "").toLowerCase();
+}
+
+export function normalizeReferralCode(code: string): string {
+  return code.trim().toUpperCase();
+}
+
+export function normalizeBankReference(reference: string): string {
+  return reference.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+export function maskIdentifier(value: string, kind: "EMAIL" | "PHONE" | "LAGOSLIFE_USERNAME"): string {
+  const trimmed = value.trim();
+  if (kind === "EMAIL") {
+    const [local, domain] = trimmed.split("@");
+    if (!local || !domain) return "***";
+    return `${local.slice(0, 1)}***@${domain}`;
+  }
+  if (kind === "PHONE") {
+    return trimmed.length <= 4 ? "***" : `***${trimmed.slice(-4)}`;
+  }
+  return trimmed.length <= 2 ? "***" : `${trimmed.slice(0, 2)}***`;
+}
+
+/**
+ * Determines whether a GameAccount's lastKnownBalance is stale based on lastSyncedAt
+ * and the configured maximum inventory data age in minutes.
+ */
+export function isInventoryStale(
+  lastSyncedAt: Date | string | null | undefined,
+  maxAgeMinutes: number = DEFAULT_INVENTORY_MAX_AGE_MINUTES,
+  now: Date = new Date()
+): boolean {
+  if (!lastSyncedAt) return true;
+  const syncedMs = typeof lastSyncedAt === "string" ? Date.parse(lastSyncedAt) : lastSyncedAt.getTime();
+  if (!Number.isFinite(syncedMs)) return true;
+  if (!Number.isFinite(maxAgeMinutes) || maxAgeMinutes <= 0) return true;
+  return now.getTime() - syncedMs > maxAgeMinutes * 60_000;
 }
 

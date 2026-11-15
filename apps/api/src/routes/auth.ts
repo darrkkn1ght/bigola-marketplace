@@ -1,6 +1,8 @@
+import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
-import { UserRole } from "@bigola/shared";
+import { UserRole, normalizeEmail } from "@bigola/shared";
 import {
   buildOtpAuthUri,
   consumeRecoveryCode,
@@ -13,16 +15,22 @@ import {
   hashRecoveryCode,
   hashSessionToken,
   verifyPassword,
+  verifyReferralCookieValue,
   verifyTotpCode,
 } from "../lib/crypto.js";
 import type { AuditLogger } from "../lib/audit.js";
 import type { AuthStore } from "../lib/repositories.js";
 import { CSRF_COOKIE_NAME, SESSION_COOKIE_NAME } from "../middleware/auth.js";
+import { AttributionError, type AttributionService } from "../services/attribution.js";
+import { REFERRAL_COOKIE_NAME } from "./referrals.js";
 
 const registerSchema = z.object({
   email: z.string().email(),
   phone: z.string().min(7).max(20).optional(),
   password: z.string().min(10).max(128),
+  fullName: z.string().min(2).max(120).optional(),
+  lagoslifeUsername: z.string().min(2).max(60).optional(),
+  referralCode: z.string().min(3).max(40).optional(),
 });
 
 const loginSchema = z.object({
@@ -38,10 +46,21 @@ const recoveryCodeSchema = z.object({
   recoveryCode: z.string().min(8).max(32),
 });
 
+const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(16).max(200),
+  newPassword: z.string().min(10).max(128),
+});
+
 export function registerAuthRoutes(
   app: FastifyInstance,
   deps: {
     authStore: AuthStore;
+    attributionService?: AttributionService;
+    prisma?: PrismaClient;
     audit: AuditLogger;
     authenticate: ReturnType<typeof import("../middleware/auth.js").createAuthMiddleware>["authenticate"];
     sessionSecret: string;
@@ -61,6 +80,41 @@ export function registerAuthRoutes(
     const parsed = registerSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid registration payload.", details: parsed.error.flatten() });
+    }
+
+    if (deps.attributionService) {
+      const rawRefCookie = request.cookies?.[REFERRAL_COOKIE_NAME];
+      const cookieReferralCode = rawRefCookie
+        ? verifyReferralCookieValue(rawRefCookie, deps.sessionSecret)
+        : null;
+
+      try {
+        const result = await deps.attributionService.registerCustomerOnline({
+          email: parsed.data.email,
+          phone: parsed.data.phone,
+          password: parsed.data.password,
+          fullName: parsed.data.fullName ?? parsed.data.email.split("@")[0],
+          lagoslifeUsername: parsed.data.lagoslifeUsername,
+          cookieReferralCode,
+          submittedReferralCode: parsed.data.referralCode,
+          ipAddress: request.ip,
+        });
+        return reply.code(201).send({
+          id: result.user.id,
+          email: result.user.email,
+          role: result.user.role,
+          customer: result.customer,
+        });
+      } catch (err) {
+        if (err instanceof AttributionError) {
+          return reply.code(err.statusCode).send({
+            error: err.message,
+            code: err.code,
+            details: err.details,
+          });
+        }
+        throw err;
+      }
     }
 
     const existing = await deps.authStore.findUserByEmail(parsed.data.email);
@@ -138,10 +192,11 @@ export function registerAuthRoutes(
     });
 
     const csrfToken = generateOpaqueToken(24);
+    const cookieSameSite = deps.isProd ? ("none" as const) : ("lax" as const);
 
     reply.setCookie(SESSION_COOKIE_NAME, rawToken, {
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: cookieSameSite,
       secure: deps.isProd,
       path: "/",
       expires: expiresAt,
@@ -149,7 +204,7 @@ export function registerAuthRoutes(
 
     reply.setCookie(CSRF_COOKIE_NAME, csrfToken, {
       httpOnly: false,
-      sameSite: "lax",
+      sameSite: cookieSameSite,
       secure: deps.isProd,
       path: "/",
       expires: expiresAt,
@@ -157,6 +212,7 @@ export function registerAuthRoutes(
 
     return reply.code(200).send({
       token: rawToken,
+      csrfToken,
       user: {
         id: user.id,
         email: user.email,
@@ -177,13 +233,57 @@ export function registerAuthRoutes(
       targetId: auth.sessionId,
       ipAddress: request.ip,
     });
-    reply.clearCookie(SESSION_COOKIE_NAME, { path: "/" });
-    reply.clearCookie(CSRF_COOKIE_NAME, { path: "/" });
+    const cookieSameSite = deps.isProd ? ("none" as const) : ("lax" as const);
+    reply.clearCookie(SESSION_COOKIE_NAME, { path: "/", sameSite: cookieSameSite, secure: deps.isProd });
+    reply.clearCookie(CSRF_COOKIE_NAME, { path: "/", sameSite: cookieSameSite, secure: deps.isProd });
     return reply.code(200).send({ ok: true });
   });
 
   app.get("/api/v1/auth/me", { preHandler: [deps.authenticate] }, async (request, reply) => {
-    return reply.code(200).send({ user: request.auth });
+    const auth = request.auth!;
+    let partnerCanVerifyPayments = false;
+    let partnerStatus: string | null = null;
+    let partnerDisplayName: string | null = null;
+    let mustChangePassword = false;
+    let canConfirmFulfilment = auth.role === "OWNER";
+
+    if (deps.prisma) {
+      const userRecord = await deps.prisma.user.findUnique({
+        where: { id: auth.userId },
+        select: {
+          mustChangePassword: true,
+          canConfirmFulfilment: true,
+          partnerProfile: {
+            select: {
+              status: true,
+              canVerifyPayments: true,
+              displayName: true,
+            },
+          },
+        },
+      });
+      mustChangePassword = userRecord?.mustChangePassword ?? false;
+      if (auth.role === "OPS_ADMIN") {
+        canConfirmFulfilment = userRecord?.canConfirmFulfilment ?? false;
+      }
+      if (userRecord?.partnerProfile) {
+        partnerStatus = userRecord.partnerProfile.status;
+        partnerDisplayName = userRecord.partnerProfile.displayName;
+        partnerCanVerifyPayments =
+          userRecord.partnerProfile.status === "ACTIVE" && userRecord.partnerProfile.canVerifyPayments;
+      }
+    }
+
+    return reply.code(200).send({
+      user: {
+        ...auth,
+        mustChangePassword,
+        canConfirmFulfilment,
+        partnerStatus,
+        partnerDisplayName,
+        partnerCanVerifyPayments,
+      },
+    });
   });
 
   app.post("/api/v1/auth/2fa/setup", { preHandler: [deps.authenticate] }, async (request, reply) => {
@@ -360,5 +460,103 @@ export function registerAuthRoutes(
       });
     }
   );
+
+  app.post("/api/v1/auth/forgot-password", { config: authRateLimit }, async (request, reply) => {
+    const parsed = forgotPasswordSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "A valid email address is required." });
+    }
+
+    if (deps.prisma) {
+      const normalized = normalizeEmail(parsed.data.email);
+      const user = await deps.prisma.user.findUnique({
+        where: { email: normalized },
+        select: { id: true, email: true },
+      });
+
+      if (user) {
+        await deps.audit.record({
+          actorUserId: user.id,
+          actionType: "PASSWORD_RESET_REQUESTED",
+          targetEntity: "USER",
+          targetId: user.id,
+          ipAddress: request.ip,
+          reason: "User requested Owner-issued password reset token",
+        });
+      }
+    }
+
+    return reply.code(200).send({
+      ok: true,
+      message:
+        "If an account exists for that email, your reset request has been logged. Contact Big Ola (Owner) to receive your one-time reset token.",
+    });
+  });
+
+  app.post("/api/v1/auth/reset-password", { config: authRateLimit }, async (request, reply) => {
+    if (!deps.prisma) {
+      return reply.code(503).send({ error: "Database service unavailable." });
+    }
+    const parsed = resetPasswordSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: "Valid reset token and password (min 10 characters) are required.",
+        details: parsed.error.flatten(),
+      });
+    }
+
+    const tokenHash = crypto.createHash("sha256").update(parsed.data.token.trim()).digest("hex");
+    const newPasswordHash = await hashPassword(parsed.data.newPassword);
+
+    const completed = await deps.prisma.$transaction(async (tx) => {
+      const tokenRecord = await tx.accountActionToken.findUnique({
+        where: { tokenHash },
+      });
+
+      if (!tokenRecord || tokenRecord.usedAt !== null || tokenRecord.expiresAt <= new Date()) {
+        return null;
+      }
+
+      await tx.user.update({
+        where: { id: tokenRecord.userId },
+        data: {
+          passwordHash: newPasswordHash,
+          mustChangePassword: false,
+        },
+      });
+
+      await tx.accountActionToken.update({
+        where: { id: tokenRecord.id },
+        data: { usedAt: new Date() },
+      });
+
+      // Revoke all existing sessions so old credentials cannot persist
+      await tx.userSession.deleteMany({
+        where: { userId: tokenRecord.userId },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorUserId: tokenRecord.userId,
+          actionType: "USER_PASSWORD_RESET_COMPLETED",
+          targetEntity: "USER",
+          targetId: tokenRecord.userId,
+          afterState: { tokenType: tokenRecord.type },
+          ipAddress: request.ip ?? null,
+        },
+      });
+
+      return { userId: tokenRecord.userId, type: tokenRecord.type };
+    });
+
+    if (!completed) {
+      return reply.code(400).send({
+        code: "INVALID_OR_EXPIRED_TOKEN",
+        error: "This reset or invitation token is invalid or has expired.",
+      });
+    }
+
+    return reply.code(200).send({ ok: true, message: "Password updated. You can now sign in." });
+  });
 }
 

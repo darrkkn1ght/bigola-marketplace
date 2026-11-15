@@ -200,3 +200,37 @@ export function consumeRecoveryCode(
   };
 }
 
+export function hashLookupValue(value: string, sessionSecret: string): string {
+  return crypto.createHmac("sha256", sessionSecret).update(`lookup:${value}`).digest("hex");
+}
+
+export function signReferralCookieValue(referralCode: string, sessionSecret: string): string {
+  const payload = `${referralCode}.${Date.now()}`;
+  const sig = crypto.createHmac("sha256", sessionSecret).update(`ref:${payload}`).digest("hex");
+  return `${payload}.${sig}`;
+}
+
+export function verifyReferralCookieValue(
+  rawCookie: string,
+  sessionSecret: string,
+  maxAgeMs = 30 * 24 * 3600 * 1000
+): string | null {
+  const parts = rawCookie.split(".");
+  if (parts.length !== 3) return null;
+  const [code, issuedAtStr, sigHex] = parts;
+  if (!code || !issuedAtStr || !sigHex || !/^[0-9a-fA-F]{64}$/.test(sigHex)) return null;
+  const issuedAt = Number(issuedAtStr);
+  if (!Number.isFinite(issuedAt) || maxAgeMs <= 0 || Date.now() - issuedAt > maxAgeMs) return null;
+
+  const expectedSig = crypto
+    .createHmac("sha256", sessionSecret)
+    .update(`ref:${code}.${issuedAtStr}`)
+    .digest("hex");
+  const sigBuf = Buffer.from(sigHex, "hex");
+  const expectedBuf = Buffer.from(expectedSig, "hex");
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+    return null;
+  }
+  return code;
+}
+

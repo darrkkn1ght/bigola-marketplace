@@ -55,6 +55,37 @@ npm run test:cloud
 
 ### 3. Remote Health Check
 ```powershell
-# Check local API or set API_HEALTH_URL=https://your-railway-api.up.railway.app/api/v1/health
+# Check local API or set API_HEALTH_URL=https://bigola-api.onrender.com/api/v1/health
 npm run health:remote
 ```
+
+---
+
+## Render Deployment — Zero-Budget ($0/month) Blueprint
+
+This repository includes a `$0/month` [render.yaml](file:///c:/Users/HomePC/Documents/bigola-marketplace/render.yaml) Blueprint using **free tiers only** from `https://github.com/darrkkn1ght/bigola-marketplace` (`main` branch):
+
+| Component | Service & Tier | Cost | Behaviour |
+| :--- | :--- | :--- | :--- |
+| **Frontend (`bigola-web`)** | Render Free Web Service | $0/mo | Sleeps after ~15 min inactivity; wakes on HTTP request |
+| **Backend API (`bigola-api`)** | Render Free Web Service | $0/mo | Sleeps after ~15 min inactivity; wakes on HTTP request |
+| **Database** | Neon Free PostgreSQL | $0/mo | Persistent primary source of truth (subject to Neon free compute/storage limits) |
+| **Queue / Cache** | Upstash Free Redis | $0/mo | Persistent TLS (`rediss://`) for dev queue testing only (never sole source of truth) |
+| **Background Worker** | *Deferred* | $0/mo | Render has no free Background Worker tier; `worker.ts` is deferred until paid budget |
+
+### Features Deferred Until Paid Infrastructure Is Approved
+- Always-on `bigola-worker` persistent process (Render Background Worker requires paid Starter $7/mo+).
+- Automated background order-expiry sweeps and continuous multi-account LagosLife disbursement queues (`DISBURSEMENT_ENABLED=false` remains locked).
+
+### Setup Steps (No Paid Services)
+1. Provision **Neon Free PostgreSQL** (`DATABASE_URL` pooled + `DIRECT_URL` direct) and **Upstash Free Redis** (`REDIS_URL` `rediss://...`).
+2. Run migrations & idempotent seed against Neon Free from your local terminal (Render Free web services do not support `preDeployCommand` / shell on all free plans):
+   ```powershell
+   Copy-Item .env.example .env
+   # Set DATABASE_URL, DIRECT_URL, REDIS_URL in .env
+   npm run db:migrate
+   npm run db:seed
+   ```
+3. In Render Dashboard → **New + → Blueprint**, connect `darrkkn1ght/bigola-marketplace` (`main` branch).
+4. Enter the `sync: false` environment variables in Render (`DATABASE_URL`, `DIRECT_URL`, `REDIS_URL`, `SESSION_SECRET`, `ENCRYPTION_KEY_HEX`, `WEB_BASE_URL`, `NEXT_PUBLIC_API_BASE_URL`).
+5. Redeploy `bigola-web` once `bigola-api`'s URL is assigned so `NEXT_PUBLIC_API_BASE_URL` is baked into the Next.js build.

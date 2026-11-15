@@ -1,0 +1,103 @@
+# Render Blueprint — Big Ola Marketplace (Monorepo)
+# Services:
+#   1. bigola-api    (Web Service — Fastify API, Free tier eligible for preview, Starter recommended for zero spin-down)
+#   2. bigola-worker (Background Worker — Persistent BullMQ multi-pipeline worker, requires paid Starter+ plan)
+#   3. bigola-web    (Web Service — Next.js frontend, Free tier eligible for preview, Starter recommended for zero spin-down)
+#
+# External Infrastructure (no paid Render DB/Redis created):
+#   - Neon PostgreSQL: DATABASE_URL (pooled) & DIRECT_URL (direct) supplied via Render dashboard (sync: false)
+#   - Upstash Redis:   REDIS_URL (rediss://...) supplied via Render dashboard (sync: false)
+#
+# Safety:
+#   - DISBURSEMENT_ENABLED is locked to "false" until explicit production go-live approval.
+#   - Zero secrets are stored in this file; all secrets use sync: false.
+
+services:
+  - type: web
+    name: bigola-api
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: npm ci && npm run build --workspace=@bigola/shared && npm run db:generate --workspace=@bigola/api && npm run build --workspace=@bigola/api
+    startCommand: npm run start --workspace=@bigola/api
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPPLIER_PRIMARY_USERNAME
+        value: bigola2823
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: QUEUE_PREFIX
+        value: bigola_mp_prod
+      - key: CORS_ORIGINS
+        fromService:
+          type: web
+          name: bigola-web
+          property: host
+      - key: WEB_BASE_URL
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY_HEX
+        sync: false
+      - key: SESSION_TTL_HOURS
+        value: "24"
+      - key: OWNER_REQUIRE_2FA
+        value: "true"
+      - key: DISBURSEMENT_ENABLED
+        value: "false"
+
+  - type: worker
+    name: bigola-worker
+    runtime: node
+    plan: starter
+    region: frankfurt
+    branch: main
+    buildCommand: npm ci && npm run build --workspace=@bigola/shared && npm run db:generate --workspace=@bigola/api && npm run build --workspace=@bigola/api
+    startCommand: npm run start:worker --workspace=@bigola/api
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPPLIER_PRIMARY_USERNAME
+        value: bigola2823
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: QUEUE_PREFIX
+        value: bigola_mp_prod
+      - key: SESSION_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY_HEX
+        sync: false
+      - key: SESSION_TTL_HOURS
+        value: "24"
+      - key: OWNER_REQUIRE_2FA
+        value: "true"
+      - key: DISBURSEMENT_ENABLED
+        value: "false"
+
+  - type: web
+    name: bigola-web
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: npm ci && npm run build --workspace=@bigola/shared && npm run build --workspace=@bigola/web
+    startCommand: npm run start --workspace=@bigola/web
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_BASE_URL
+        sync: false

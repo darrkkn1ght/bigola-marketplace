@@ -34,8 +34,11 @@ enum AttributionSource {
 
 enum OrderStatus {
   AWAITING_PAYMENT
+  PAYMENT_SUBMITTED
   PROOF_SUBMITTED
+  PAYMENT_EXCEPTION_REVIEW
   PAYMENT_VERIFIED
+  READY_FOR_FULFILMENT
   QUEUED
   DISBURSING
   PARTIALLY_FULFILLED
@@ -43,6 +46,80 @@ enum OrderStatus {
   CANCELLED
   EXPIRED
   REFUNDED
+}
+
+enum PaymentExceptionType {
+  NONE
+  PARTIAL_PAYMENT
+  EXCESS_PAYMENT
+  SPLIT_TRANSFER
+  DUPLICATE_PAYMENT
+}
+
+enum VerificationDecisionType {
+  APPROVED
+  REJECTED
+  EXCEPTION_FLAGGED
+  REVERSED
+}
+
+enum BankAccountChangeRequestStatus {
+  PENDING_PARTNER_CONFIRMATION
+  APPROVED
+  REJECTED
+}
+
+enum BankStatementFormat {
+  CSV
+  JSON
+}
+
+enum BankStatementLineStatus {
+  UNMATCHED
+  LINKED
+}
+
+enum NotificationType {
+  PAYMENT_AWAITING_REVIEW
+  PAYMENT_EXCEPTION_REVIEW
+  PAYMENT_APPROVED
+  PAYMENT_REJECTED
+  PAYMENT_REVERSED
+  ORDER_CREATED
+  ORDER_FULFILLED
+  ORDER_CANCELLED
+  ORDER_EXPIRED
+  REFUND_REQUESTED
+  REFUND_CONFIRMED
+  INVENTORY_LOW_STOCK
+  INVENTORY_STALE
+  INVENTORY_DISCREPANCY
+  SUPPORT_TICKET_CREATED
+  SUPPORT_TICKET_UPDATED
+  DISPUTE_OPENED
+}
+
+enum AccountTokenType {
+  PASSWORD_RESET
+  PARTNER_INVITE
+}
+
+enum OrderChannel {
+  ONLINE
+  OFFLINE_PARTNER
+  OFFLINE_OWNER
+}
+
+enum OrderType {
+  BULK
+  RETAIL
+}
+
+enum InventoryReservationStatus {
+  ACTIVE
+  RELEASED
+  CONSUMED
+  EXPIRED
 }
 
 enum ProofVerificationStatus {
@@ -60,8 +137,77 @@ enum CommissionRuleStatus {
 enum CommissionSettlementStatus {
   PENDING_RULE
   ACCRUED
-  SETTLED
+  APPROVED_FOR_PAYOUT
+  PAID
   REVERSED
+}
+
+enum AttributionConflictStatus {
+  PENDING
+  RESOLVED_KEPT_EXISTING
+  RESOLVED_REASSIGNED
+  DISMISSED
+}
+
+enum ConflictMatchedField {
+  EMAIL
+  PHONE
+  LAGOSLIFE_USERNAME
+}
+
+enum CommissionLedgerEntryType {
+  ACCRUAL
+  APPROVAL
+  PAYOUT
+  REVERSAL
+  ADJUSTMENT
+  PARTIAL_REFUND_ADJUSTMENT
+}
+
+enum RefundScope {
+  PARTIAL
+  FULL
+}
+
+enum RefundStatus {
+  REQUESTED
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
+enum RefundFinancialStatus {
+  NONE
+  PARTIALLY_REFUNDED
+  FULLY_REFUNDED
+}
+
+enum InventoryDiscrepancyStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum SupportTicketCategory {
+  PAYMENT_COMPLAINT
+  ORDER_DISPUTE
+  ACCOUNT_ISSUE
+  GENERAL
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_REVIEW
+  WAITING_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
 }
 
 enum GameAccountRole {
@@ -72,6 +218,7 @@ enum GameAccountRole {
 enum GameAccountHealth {
   UNCONFIGURED
   ACTIVE
+  STALE
   COOLDOWN
   SESSION_EXPIRED
   LOW_BALANCE
@@ -84,6 +231,7 @@ enum InventoryEntryType {
   ORDER_RESERVE
   ORDER_RELEASE
   DISBURSEMENT_DEBIT
+  MANUAL_FULFILMENT_DEBIT
   MANUAL_ADJUSTMENT
 }
 
@@ -114,6 +262,8 @@ model User {
   mfaEnabled             Boolean  @default(false) @map("mfa_enabled")
   encryptedTotpSecret    String?  @map("encrypted_totp_secret")
   recoveryCodeHashes     Json?    @map("recovery_code_hashes")
+  mustChangePassword     Boolean  @default(false) @map("must_change_password")
+  canConfirmFulfilment   Boolean  @default(false) @map("can_confirm_fulfilment")
   isActive               Boolean  @default(true) @map("is_active")
   createdAt              DateTime @default(now()) @map("created_at")
   updatedAt              DateTime @updatedAt @map("updated_at")
@@ -121,12 +271,49 @@ model User {
   sessions               UserSession[]
   partnerProfile         Partner?
   customerProfile        Customer?
-  verifiedProofs         PaymentProof[]   @relation("ProofVerifiedBy")
-  configuredRules        CommissionRule[] @relation("RuleConfiguredBy")
+  verifiedProofs         PaymentProof[]          @relation("ProofVerifiedBy")
+  configuredRules        CommissionRule[]        @relation("RuleConfiguredBy")
   inventoryEntries       InventoryLedger[]
-  auditLogs              AuditLog[]       @relation("AuditActor")
+  auditLogs              AuditLog[]              @relation("AuditActor")
+  requestedConflicts     AttributionConflict[]   @relation("ConflictRequestedBy")
+  resolvedConflicts      AttributionConflict[]   @relation("ConflictResolvedBy")
+  commissionLedgerEntries CommissionLedgerEntry[]
+  createdOrders           Order[]                          @relation("OrderCreatedBy")
+  submittedPaymentProofs  PaymentProof[]                   @relation("ProofSubmittedBy")
+  createdBankAccounts     ReceivingBankAccount[]           @relation("BankAccountCreatedBy")
+  requestedBankChanges    ReceivingBankAccountChangeRequest[] @relation("BankChangeRequestedBy")
+  confirmedBankChanges    ReceivingBankAccountChangeRequest[] @relation("BankChangeConfirmedBy")
+  uploadedStatements      BankStatementUpload[]            @relation("StatementUploadedBy")
+  verificationDecisions   PaymentVerificationDecision[]    @relation("DecisionVerifier")
+  notifications           Notification[]
+  accountTokens           AccountActionToken[]             @relation("AccountTokenUser")
+  issuedAccountTokens     AccountActionToken[]             @relation("AccountTokenIssuer")
+  confirmedManualFulfilments ManualFulfilmentRecord[]      @relation("ManualFulfilmentConfirmedBy")
+  createdRefundRequests   RefundRequest[]                  @relation("RefundRequestCreatedBy")
+  refundEvents            RefundEvent[]                    @relation("RefundEventActor")
+  acknowledgedDiscrepancies InventoryDiscrepancy[]         @relation("DiscrepancyAcknowledgedBy")
+  assignedSupportTickets  SupportTicket[]                  @relation("SupportTicketAssignedTo")
+  resolvedSupportTickets  SupportTicket[]                  @relation("SupportTicketResolvedBy")
+  supportMessages         SupportTicketMessage[]           @relation("SupportMessageAuthor")
 
   @@map("users")
+}
+
+model AccountActionToken {
+  id         String           @id @default(uuid()) @db.Uuid
+  userId     String           @map("user_id") @db.Uuid
+  tokenHash  String           @unique @map("token_hash")
+  type       AccountTokenType
+  issuedById String?          @map("issued_by_id") @db.Uuid
+  expiresAt  DateTime         @map("expires_at")
+  usedAt     DateTime?        @map("used_at")
+  createdAt  DateTime         @default(now()) @map("created_at")
+
+  user     User  @relation("AccountTokenUser", fields: [userId], references: [id], onDelete: Cascade)
+  issuedBy User? @relation("AccountTokenIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
+
+  @@index([userId, type, usedAt])
+  @@map("account_action_tokens")
 }
 
 model UserSession {
@@ -162,89 +349,317 @@ model Partner {
   referralCode        String        @unique @map("referral_code")
   displayName         String        @map("display_name")
   status              PartnerStatus @default(ACTIVE)
+  canVerifyPayments   Boolean       @default(false) @map("can_verify_payments")
   createdAt           DateTime      @default(now()) @map("created_at")
   updatedAt           DateTime      @updatedAt @map("updated_at")
 
-  user                User          @relation(fields: [userId], references: [id], onDelete: Restrict)
-  attributedCustomers Customer[]
-  orders              Order[]
-  commissionRecords   CommissionRecord[]
+  user                    User                              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  attributedCustomers     Customer[]
+  orders                  Order[]
+  commissionRecords       CommissionRecord[]
+  commissionLedgerEntries CommissionLedgerEntry[]
+  existingConflicts       AttributionConflict[]             @relation("ConflictExistingPartner")
+  requestedConflicts      AttributionConflict[]             @relation("ConflictRequestedPartner")
+  receivingBankAccounts   ReceivingBankAccount[]
+  bankChangeRequests      ReceivingBankAccountChangeRequest[]
+  supportTickets          SupportTicket[]
 
   @@map("partners")
 }
 
 model Customer {
-  id                  String            @id @default(uuid()) @db.Uuid
-  userId              String?           @unique @map("user_id") @db.Uuid
-  fullName            String            @map("full_name")
-  email               String?           @unique
-  phone               String?           @unique
-  lagoslifeUsername   String?           @map("lagoslife_username")
-  category            CustomerCategory  @default(CATEGORY_B_BIGOLA)
-  attributedPartnerId String?           @map("attributed_partner_id") @db.Uuid
-  attributedAt        DateTime?         @map("attributed_at")
-  attributionSource   AttributionSource? @map("attribution_source")
-  createdAt           DateTime          @default(now()) @map("created_at")
-  updatedAt           DateTime          @updatedAt @map("updated_at")
+  id                          String             @id @default(uuid()) @db.Uuid
+  userId                      String?            @unique @map("user_id") @db.Uuid
+  fullName                    String             @map("full_name")
+  email                       String?            @unique
+  phone                       String?            @unique
+  phoneNormalized             String?            @unique @map("phone_normalized")
+  lagoslifeUsername           String?            @map("lagoslife_username")
+  lagoslifeUsernameNormalized String?            @unique @map("lagoslife_username_normalized")
+  category                    CustomerCategory   @default(CATEGORY_B_BIGOLA)
+  attributedPartnerId         String?            @map("attributed_partner_id") @db.Uuid
+  attributedAt                DateTime?          @map("attributed_at")
+  attributionSource           AttributionSource? @map("attribution_source")
+  createdAt                   DateTime           @default(now()) @map("created_at")
+  updatedAt                   DateTime           @updatedAt @map("updated_at")
 
-  user                User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
-  attributedPartner   Partner?          @relation(fields: [attributedPartnerId], references: [id], onDelete: Restrict)
-  orders              Order[]
+  user                        User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  attributedPartner           Partner?           @relation(fields: [attributedPartnerId], references: [id], onDelete: Restrict)
+  orders                      Order[]
+  attributionConflicts        AttributionConflict[]
+  supportTickets              SupportTicket[]
 
   @@index([attributedPartnerId])
   @@map("customers")
+}
+
+model AttributionConflict {
+  id                 String                    @id @default(uuid()) @db.Uuid
+  existingCustomerId String                    @map("existing_customer_id") @db.Uuid
+  existingPartnerId  String?                   @map("existing_partner_id") @db.Uuid
+  requestedPartnerId String                    @map("requested_partner_id") @db.Uuid
+  requestedByUserId  String                    @map("requested_by_user_id") @db.Uuid
+  matchedField       ConflictMatchedField      @map("matched_field")
+  matchedValueHash   String                    @map("matched_value_hash")
+  matchedValueMasked String                    @map("matched_value_masked")
+  status             AttributionConflictStatus @default(PENDING)
+  resolutionReason   String?                   @map("resolution_reason")
+  resolvedById       String?                   @map("resolved_by_id") @db.Uuid
+  resolvedAt         DateTime?                 @map("resolved_at")
+  createdAt          DateTime                  @default(now()) @map("created_at")
+
+  existingCustomer   Customer                  @relation(fields: [existingCustomerId], references: [id], onDelete: Restrict)
+  existingPartner    Partner?                  @relation("ConflictExistingPartner", fields: [existingPartnerId], references: [id], onDelete: Restrict)
+  requestedPartner   Partner                   @relation("ConflictRequestedPartner", fields: [requestedPartnerId], references: [id], onDelete: Restrict)
+  requestedBy        User                      @relation("ConflictRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  resolvedBy         User?                     @relation("ConflictResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([requestedPartnerId])
+  @@map("attribution_conflicts")
 }
 
 model Order {
   id                         String           @id @default(uuid()) @db.Uuid
   orderNumber                String           @unique @map("order_number")
   paymentReference           String           @unique @map("payment_reference")
+  channel                    OrderChannel     @default(ONLINE)
+  orderType                  OrderType        @default(BULK) @map("order_type")
+  createdByUserId            String?          @map("created_by_user_id") @db.Uuid
+  idempotencyKey             String?          @unique @map("idempotency_key")
+  idempotencyRequestHash     String?          @map("idempotency_request_hash")
   customerId                 String           @map("customer_id") @db.Uuid
   customerCategory           CustomerCategory @map("customer_category")
   partnerId                  String?          @map("partner_id") @db.Uuid
   recipientLagoslifeUsername String           @map("recipient_lagoslife_username")
-  gameAmountRequested        Decimal          @map("game_amount_requested") @db.Decimal(30, 0)
-  gameAmountDelivered        Decimal          @default(0) @map("game_amount_delivered") @db.Decimal(30, 0)
-  fiatAmountKobo             BigInt           @map("fiat_amount_kobo")
-  pricingSnapshot            Json             @map("pricing_snapshot")
-  status                     OrderStatus      @default(AWAITING_PAYMENT)
-  expiresAt                  DateTime?        @map("expires_at")
+  gameAmountRequested        Decimal               @map("game_amount_requested") @db.Decimal(30, 0)
+  gameAmountDelivered        Decimal               @default(0) @map("game_amount_delivered") @db.Decimal(30, 0)
+  fulfilledAmount            Decimal               @default(0) @map("fulfilled_amount") @db.Decimal(30, 0)
+  fiatAmountKobo             BigInt                @map("fiat_amount_kobo")
+  pricingSnapshot            Json                  @map("pricing_snapshot")
+  status                     OrderStatus           @default(AWAITING_PAYMENT)
+  paymentExceptionType       PaymentExceptionType  @default(NONE) @map("payment_exception_type")
+  verifiedGrossFiatKobo      BigInt                @default(0) @map("verified_gross_fiat_kobo")
+  confirmedRefundedKobo      BigInt                @default(0) @map("confirmed_refunded_kobo")
+  refundFinancialStatus      RefundFinancialStatus @default(NONE) @map("refund_financial_status")
+  fundingCycle               Int                   @default(1) @map("funding_cycle")
+  expiresAt                  DateTime?            @map("expires_at")
   scheduledWindowStart       DateTime?        @map("scheduled_window_start")
   scheduledWindowEnd         DateTime?        @map("scheduled_window_end")
   createdAt                  DateTime         @default(now()) @map("created_at")
   updatedAt                  DateTime         @updatedAt @map("updated_at")
 
+  createdBy                  User?            @relation("OrderCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   customer                   Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)
   partner                    Partner?         @relation(fields: [partnerId], references: [id], onDelete: Restrict)
   paymentProofs              PaymentProof[]
   commissionRecord           CommissionRecord?
   disbursementJobs           DisbursementJob[]
   inventoryEntries           InventoryLedger[]
+  reservations               InventoryReservation[]
+  verificationDecisions      PaymentVerificationDecision[]
+  decisionStatementLines     PaymentDecisionStatementLine[]
+  linkedStatementLines       BankStatementLine[]
+  notifications              Notification[]
+  manualFulfilments          ManualFulfilmentRecord[]
+  refundRequests             RefundRequest[]
+  refundEvents               RefundEvent[]
+  supportTickets             SupportTicket[]
 
   @@index([customerId, status])
   @@index([partnerId])
+  @@index([status, expiresAt])
   @@map("orders")
 }
 
 model PaymentProof {
-  id                 String                  @id @default(uuid()) @db.Uuid
-  orderId            String                  @map("order_id") @db.Uuid
-  bankReference      String                  @map("bank_reference")
-  senderAccountName  String                  @map("sender_account_name")
-  claimedAmountKobo  BigInt                  @map("claimed_amount_kobo")
-  proofFileKey       String                  @map("proof_file_key")
-  verificationStatus ProofVerificationStatus @default(PENDING) @map("verification_status")
-  verifiedById       String?                 @map("verified_by_id") @db.Uuid
-  rejectionReason    String?                 @map("rejection_reason")
-  verifiedAt         DateTime?               @map("verified_at")
-  createdAt          DateTime                @default(now()) @map("created_at")
+  id                     String                  @id @default(uuid()) @db.Uuid
+  orderId                String                  @map("order_id") @db.Uuid
+  receivingBankAccountId String?                 @map("receiving_bank_account_id") @db.Uuid
+  submittedByUserId      String?                 @map("submitted_by_user_id") @db.Uuid
+  bankName               String?                 @map("bank_name")
+  bankReference          String                  @map("bank_reference")
+  senderAccountName      String                  @map("sender_account_name")
+  claimedAmountKobo      BigInt                  @map("claimed_amount_kobo")
+  transferTimestamp      DateTime?               @map("transfer_timestamp")
+  proofFileKey           String                  @map("proof_file_key")
+  proofMimeType          String?                 @map("proof_mime_type")
+  proofSha256            String?                 @map("proof_sha256")
+  isSplitTransfer        Boolean                 @default(false) @map("is_split_transfer")
+  verificationStatus     ProofVerificationStatus @default(PENDING) @map("verification_status")
+  verifiedById           String?                 @map("verified_by_id") @db.Uuid
+  rejectionReason        String?                 @map("rejection_reason")
+  verifiedAt             DateTime?               @map("verified_at")
+  createdAt              DateTime                @default(now()) @map("created_at")
 
-  order              Order                   @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  verifiedBy         User?                   @relation("ProofVerifiedBy", fields: [verifiedById], references: [id], onDelete: Restrict)
+  order                  Order                   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  receivingBankAccount   ReceivingBankAccount?   @relation(fields: [receivingBankAccountId], references: [id], onDelete: Restrict)
+  submittedBy            User?                   @relation("ProofSubmittedBy", fields: [submittedByUserId], references: [id], onDelete: Restrict)
+  verifiedBy             User?                   @relation("ProofVerifiedBy", fields: [verifiedById], references: [id], onDelete: Restrict)
+  verificationDecisions  PaymentVerificationDecision[]
 
   @@index([orderId])
   @@index([bankReference, claimedAmountKobo])
   @@map("payment_proofs")
+}
+
+model ReceivingBankAccount {
+  id             String   @id @default(uuid()) @db.Uuid
+  bankName       String   @map("bank_name")
+  bankCode       String?  @map("bank_code")
+  accountNumber  String   @map("account_number")
+  accountName    String   @map("account_name")
+  ownerPartnerId String   @map("owner_partner_id") @db.Uuid
+  isActive       Boolean  @default(true) @map("is_active")
+  isDefault      Boolean  @default(false) @map("is_default")
+  createdById    String   @map("created_by_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  ownerPartner          Partner                           @relation(fields: [ownerPartnerId], references: [id], onDelete: Restrict)
+  createdBy             User                              @relation("BankAccountCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  changeRequests        ReceivingBankAccountChangeRequest[]
+  paymentProofs         PaymentProof[]
+  statementUploads      BankStatementUpload[]
+  statementLines        BankStatementLine[]
+  verificationDecisions PaymentVerificationDecision[]
+
+  @@unique([bankName, accountNumber])
+  @@index([ownerPartnerId, isActive])
+  @@map("receiving_bank_accounts")
+}
+
+model ReceivingBankAccountChangeRequest {
+  id                     String                         @id @default(uuid()) @db.Uuid
+  receivingBankAccountId String?                        @map("receiving_bank_account_id") @db.Uuid
+  ownerPartnerId         String                         @map("owner_partner_id") @db.Uuid
+  requestedByUserId      String                         @map("requested_by_user_id") @db.Uuid
+  confirmedByUserId      String?                        @map("confirmed_by_user_id") @db.Uuid
+  actionType             String                         @map("action_type")
+  proposedData           Json                           @map("proposed_data")
+  status                 BankAccountChangeRequestStatus @default(PENDING_PARTNER_CONFIRMATION)
+  requestReason          String                         @map("request_reason")
+  confirmationReason     String?                        @map("confirmation_reason")
+  confirmedAt            DateTime?                      @map("confirmed_at")
+  createdAt              DateTime                       @default(now()) @map("created_at")
+
+  receivingBankAccount   ReceivingBankAccount?          @relation(fields: [receivingBankAccountId], references: [id], onDelete: Restrict)
+  ownerPartner           Partner                        @relation(fields: [ownerPartnerId], references: [id], onDelete: Restrict)
+  requestedBy            User                           @relation("BankChangeRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  confirmedBy            User?                          @relation("BankChangeConfirmedBy", fields: [confirmedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([ownerPartnerId, status])
+  @@map("receiving_bank_account_change_requests")
+}
+
+model BankStatementUpload {
+  id                     String              @id @default(uuid()) @db.Uuid
+  receivingBankAccountId String              @map("receiving_bank_account_id") @db.Uuid
+  uploadedByUserId       String              @map("uploaded_by_user_id") @db.Uuid
+  fileName               String              @map("file_name")
+  format                 BankStatementFormat
+  redactedBatchSha256    String              @map("redacted_batch_sha256")
+  periodStart            DateTime?           @map("period_start")
+  periodEnd              DateTime?           @map("period_end")
+  lineCount              Int                 @map("line_count")
+  notes                  String?
+  createdAt              DateTime            @default(now()) @map("created_at")
+
+  receivingBankAccount   ReceivingBankAccount @relation(fields: [receivingBankAccountId], references: [id], onDelete: Restrict)
+  uploadedBy             User                 @relation("StatementUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+  lines                  BankStatementLine[]
+
+  @@index([receivingBankAccountId, createdAt])
+  @@map("bank_statement_uploads")
+}
+
+model BankStatementLine {
+  id                           String                  @id @default(uuid()) @db.Uuid
+  statementUploadId            String                  @map("statement_upload_id") @db.Uuid
+  receivingBankAccountId       String                  @map("receiving_bank_account_id") @db.Uuid
+  transactionReference         String                  @map("transaction_reference")
+  transactionReferenceNormalized String                @map("transaction_reference_normalized")
+  amountKobo                   BigInt                  @map("amount_kobo")
+  creditedAt                   DateTime                @map("credited_at")
+  senderName                   String?                 @map("sender_name")
+  narration                    String?
+  reconciliationStatus         BankStatementLineStatus @default(UNMATCHED) @map("reconciliation_status")
+  linkedOrderId                String?                 @map("linked_order_id") @db.Uuid
+  createdAt                    DateTime                @default(now()) @map("created_at")
+
+  statementUpload              BankStatementUpload     @relation(fields: [statementUploadId], references: [id], onDelete: Restrict)
+  receivingBankAccount         ReceivingBankAccount    @relation(fields: [receivingBankAccountId], references: [id], onDelete: Restrict)
+  linkedOrder                  Order?                  @relation(fields: [linkedOrderId], references: [id], onDelete: Restrict)
+  decisionAllocation           PaymentDecisionStatementLine?
+
+  @@unique([receivingBankAccountId, transactionReferenceNormalized])
+  @@index([linkedOrderId])
+  @@index([reconciliationStatus, receivingBankAccountId])
+  @@map("bank_statement_lines")
+}
+
+model PaymentVerificationDecision {
+  id                            String                   @id @default(uuid()) @db.Uuid
+  orderId                       String                   @map("order_id") @db.Uuid
+  paymentProofId                String?                  @map("payment_proof_id") @db.Uuid
+  receivingBankAccountId        String?                  @map("receiving_bank_account_id") @db.Uuid
+  verifierUserId                String                   @map("verifier_user_id") @db.Uuid
+  verifierRole                  UserRole                 @map("verifier_role")
+  decision                      VerificationDecisionType
+  exceptionType                 PaymentExceptionType     @default(NONE) @map("exception_type")
+  bankCreditConfirmed           Boolean                  @default(false) @map("bank_credit_confirmed")
+  bankCreditReference           String?                  @map("bank_credit_reference")
+  bankCreditReferenceNormalized String?                  @map("bank_credit_reference_normalized")
+  bankCreditAmountKobo          BigInt?                  @map("bank_credit_amount_kobo")
+  bankCreditTimestamp           DateTime?                @map("bank_credit_timestamp")
+  isManualWithoutStatement      Boolean                  @default(false) @map("is_manual_without_statement")
+  reason                        String
+  supersedesDecisionId          String?                  @map("supersedes_decision_id") @db.Uuid
+  createdAt                     DateTime                 @default(now()) @map("created_at")
+
+  order                         Order                    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  paymentProof                  PaymentProof?            @relation(fields: [paymentProofId], references: [id], onDelete: Restrict)
+  receivingBankAccount          ReceivingBankAccount?    @relation(fields: [receivingBankAccountId], references: [id], onDelete: Restrict)
+  verifier                      User                     @relation("DecisionVerifier", fields: [verifierUserId], references: [id], onDelete: Restrict)
+  statementLines                PaymentDecisionStatementLine[]
+
+  @@index([orderId, createdAt])
+  @@index([supersedesDecisionId])
+  @@map("payment_verification_decisions")
+}
+
+model PaymentDecisionStatementLine {
+  id                  String                      @id @default(uuid()) @db.Uuid
+  decisionId          String                      @map("decision_id") @db.Uuid
+  statementLineId     String                      @unique @map("statement_line_id") @db.Uuid
+  orderId             String                      @map("order_id") @db.Uuid
+  allocatedAmountKobo BigInt                      @map("allocated_amount_kobo")
+  createdAt           DateTime                    @default(now()) @map("created_at")
+
+  decision            PaymentVerificationDecision @relation(fields: [decisionId], references: [id], onDelete: Restrict)
+  statementLine       BankStatementLine           @relation(fields: [statementLineId], references: [id], onDelete: Restrict)
+  order               Order                       @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@unique([decisionId, statementLineId])
+  @@index([orderId])
+  @@map("payment_decision_statement_lines")
+}
+
+model Notification {
+  id              String           @id @default(uuid()) @db.Uuid
+  recipientUserId String           @map("recipient_user_id") @db.Uuid
+  type            NotificationType
+  orderId         String?          @map("order_id") @db.Uuid
+  title           String
+  message         String
+  readAt          DateTime?        @map("read_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  recipient       User             @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+  order           Order?           @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([recipientUserId, readAt, createdAt])
+  @@map("notifications")
 }
 
 model CommissionRule {
@@ -282,29 +697,76 @@ model CommissionRecord {
   order                  Order                      @relation(fields: [orderId], references: [id], onDelete: Restrict)
   partner                Partner?                   @relation(fields: [partnerId], references: [id], onDelete: Restrict)
   rule                   CommissionRule             @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  ledgerEntries          CommissionLedgerEntry[]
 
   @@index([partnerId, settlementStatus])
   @@map("commission_records")
 }
 
-model GameAccount {
-  id                     String            @id @default(uuid()) @db.Uuid
-  slotCode               String            @unique @map("slot_code")
-  lagoslifeUsername      String?           @unique @map("lagoslife_username")
-  accountRole            GameAccountRole   @map("account_role")
-  targetReserveAmount    Decimal           @default(0) @map("target_reserve_amount") @db.Decimal(30, 0)
-  lastKnownBalance       Decimal           @default(0) @map("last_known_balance") @db.Decimal(30, 0)
-  reservedForOrders      Decimal           @default(0) @map("reserved_for_orders") @db.Decimal(30, 0)
-  healthStatus           GameAccountHealth @default(UNCONFIGURED) @map("health_status")
-  encryptedSessionBundle String?           @map("encrypted_session_bundle")
-  lastSyncedAt           DateTime?         @map("last_synced_at")
-  createdAt              DateTime          @default(now()) @map("created_at")
-  updatedAt              DateTime          @updatedAt @map("updated_at")
+model CommissionLedgerEntry {
+  id                 String                    @id @default(uuid()) @db.Uuid
+  commissionRecordId String                    @map("commission_record_id") @db.Uuid
+  partnerId          String?                   @map("partner_id") @db.Uuid
+  fundingCycle       Int                       @default(1) @map("funding_cycle")
+  entryType          CommissionLedgerEntryType @map("entry_type")
+  partnerDeltaKobo   BigInt                    @map("partner_delta_kobo")
+  ownerDeltaKobo     BigInt                    @map("owner_delta_kobo")
+  reference          String?
+  idempotencyKey     String?                   @unique @map("idempotency_key")
+  notes              String?
+  createdById        String?                   @map("created_by_id") @db.Uuid
+  createdAt          DateTime                  @default(now()) @map("created_at")
 
-  inventoryEntries       InventoryLedger[]
-  disbursementChunks     DisbursementChunk[]
+  commissionRecord   CommissionRecord          @relation(fields: [commissionRecordId], references: [id], onDelete: Restrict)
+  partner            Partner?                  @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  createdBy          User?                     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([commissionRecordId, createdAt])
+  @@index([partnerId, entryType])
+  @@map("commission_ledger_entries")
+}
+
+model GameAccount {
+  id                      String            @id @default(uuid()) @db.Uuid
+  slotCode                String            @unique @map("slot_code")
+  lagoslifeUsername       String?           @unique @map("lagoslife_username")
+  accountRole             GameAccountRole   @map("account_role")
+  targetReserveAmount     Decimal           @default(0) @map("target_reserve_amount") @db.Decimal(30, 0)
+  logicalAllocationAmount Decimal           @default(0) @map("logical_allocation_amount") @db.Decimal(30, 0)
+  lastKnownBalance        Decimal           @default(0) @map("last_known_balance") @db.Decimal(30, 0)
+  reservedForOrders       Decimal           @default(0) @map("reserved_for_orders") @db.Decimal(30, 0)
+  healthStatus            GameAccountHealth @default(UNCONFIGURED) @map("health_status")
+  encryptedSessionBundle  String?           @map("encrypted_session_bundle")
+  lastSyncedAt            DateTime?         @map("last_synced_at")
+  createdAt               DateTime          @default(now()) @map("created_at")
+  updatedAt               DateTime          @updatedAt @map("updated_at")
+
+  inventoryEntries        InventoryLedger[]
+  disbursementChunks      DisbursementChunk[]
+  reservations            InventoryReservation[]
+  manualFulfilments       ManualFulfilmentRecord[]
+  discrepancies           InventoryDiscrepancy[]
 
   @@map("game_accounts")
+}
+
+model InventoryReservation {
+  id            String                     @id @default(uuid()) @db.Uuid
+  orderId       String                     @map("order_id") @db.Uuid
+  gameAccountId String                     @map("game_account_id") @db.Uuid
+  amount        Decimal                    @db.Decimal(30, 0)
+  status        InventoryReservationStatus @default(ACTIVE)
+  expiresAt     DateTime?                  @map("expires_at")
+  releasedAt    DateTime?                  @map("released_at")
+  releaseReason String?                    @map("release_reason")
+  createdAt     DateTime                   @default(now()) @map("created_at")
+
+  order         Order                      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  gameAccount   GameAccount                @relation(fields: [gameAccountId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, gameAccountId])
+  @@index([gameAccountId, status])
+  @@map("inventory_reservations")
 }
 
 model InventoryLedger {
@@ -386,5 +848,133 @@ model AuditLog {
   @@index([targetEntity, targetId])
   @@index([actorUserId, createdAt])
   @@map("audit_logs")
+}
+
+model ManualFulfilmentRecord {
+  id                  String      @id @default(uuid()) @db.Uuid
+  orderId             String      @map("order_id") @db.Uuid
+  sourceGameAccountId String      @map("source_game_account_id") @db.Uuid
+  deliveredAmount     Decimal     @map("delivered_amount") @db.Decimal(30, 0)
+  externalReference   String      @unique @map("external_reference")
+  idempotencyKey      String      @unique @map("idempotency_key")
+  requestHash         String      @map("request_hash")
+  notes               String?
+  confirmedByUserId   String      @map("confirmed_by_user_id") @db.Uuid
+  confirmedAt         DateTime    @default(now()) @map("confirmed_at")
+
+  order             Order       @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  sourceGameAccount GameAccount @relation(fields: [sourceGameAccountId], references: [id], onDelete: Restrict)
+  confirmedBy       User        @relation("ManualFulfilmentConfirmedBy", fields: [confirmedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, confirmedAt])
+  @@index([sourceGameAccountId, confirmedAt])
+  @@map("manual_fulfilment_records")
+}
+
+model InventoryDiscrepancy {
+  id                   String                     @id @default(uuid()) @db.Uuid
+  gameAccountId        String                     @map("game_account_id") @db.Uuid
+  expectedBalance      Decimal                    @map("expected_balance") @db.Decimal(30, 0)
+  observedBalance      Decimal                    @map("observed_balance") @db.Decimal(30, 0)
+  deltaAmount          Decimal                    @map("delta_amount") @db.Decimal(30, 0)
+  status               InventoryDiscrepancyStatus @default(OPEN)
+  syncLedgerId         String                     @map("sync_ledger_id") @db.Uuid
+  acknowledgedByUserId String?                    @map("acknowledged_by_user_id") @db.Uuid
+  resolutionNotes      String?                    @map("resolution_notes")
+  createdAt            DateTime                   @default(now()) @map("created_at")
+  resolvedAt           DateTime?                  @map("resolved_at")
+
+  gameAccount        GameAccount @relation(fields: [gameAccountId], references: [id], onDelete: Restrict)
+  acknowledgedBy     User?       @relation("DiscrepancyAcknowledgedBy", fields: [acknowledgedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([gameAccountId, status])
+  @@map("inventory_discrepancies")
+}
+
+model RefundRequest {
+  id                       String       @id @default(uuid()) @db.Uuid
+  orderId                  String       @map("order_id") @db.Uuid
+  scope                    RefundScope
+  requestedAmountKobo      BigInt       @map("requested_amount_kobo")
+  currentStatus            RefundStatus @default(REQUESTED) @map("current_status")
+  confirmIdempotencyKey    String?      @unique @map("confirm_idempotency_key")
+  confirmRequestHash       String?      @map("confirm_request_hash")
+  confirmedRefundReference String?      @unique @map("confirmed_refund_reference")
+  createdByUserId          String       @map("created_by_user_id") @db.Uuid
+  createdAt                DateTime     @default(now()) @map("created_at")
+  updatedAt                DateTime     @updatedAt @map("updated_at")
+
+  order     Order         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  createdBy User          @relation("RefundRequestCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  events    RefundEvent[]
+
+  @@index([orderId, currentStatus])
+  @@map("refund_requests")
+}
+
+model RefundEvent {
+  id              String       @id @default(uuid()) @db.Uuid
+  refundRequestId String       @map("refund_request_id") @db.Uuid
+  orderId         String       @map("order_id") @db.Uuid
+  eventType       RefundStatus @map("event_type")
+  amountKobo      BigInt       @map("amount_kobo")
+  refundReference String?      @map("refund_reference")
+  reason          String
+  actorUserId     String       @map("actor_user_id") @db.Uuid
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  refundRequest RefundRequest @relation(fields: [refundRequestId], references: [id], onDelete: Restrict)
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actor         User          @relation("RefundEventActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([refundRequestId, createdAt])
+  @@index([orderId, createdAt])
+  @@map("refund_events")
+}
+
+model SupportTicket {
+  id                String                @id @default(uuid()) @db.Uuid
+  ticketNumber      String                @unique @map("ticket_number")
+  customerId        String                @map("customer_id") @db.Uuid
+  partnerId         String?               @map("partner_id") @db.Uuid
+  orderId           String?               @map("order_id") @db.Uuid
+  category          SupportTicketCategory
+  status            SupportTicketStatus   @default(OPEN)
+  priority          SupportTicketPriority @default(MEDIUM)
+  subject           String
+  assignedToUserId  String?               @map("assigned_to_user_id") @db.Uuid
+  resolutionSummary String?               @map("resolution_summary")
+  resolvedByUserId  String?               @map("resolved_by_user_id") @db.Uuid
+  resolvedAt        DateTime?             @map("resolved_at")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  customer   Customer               @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  partner    Partner?               @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  order      Order?                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  assignedTo User?                  @relation("SupportTicketAssignedTo", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  resolvedBy User?                  @relation("SupportTicketResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  messages   SupportTicketMessage[]
+
+  @@index([customerId, status])
+  @@index([partnerId, status])
+  @@index([orderId])
+  @@index([status, priority])
+  @@map("support_tickets")
+}
+
+model SupportTicketMessage {
+  id           String   @id @default(uuid()) @db.Uuid
+  ticketId     String   @map("ticket_id") @db.Uuid
+  authorUserId String   @map("author_user_id") @db.Uuid
+  isInternal   Boolean  @default(false) @map("is_internal")
+  body         String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User          @relation("SupportMessageAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+  @@map("support_ticket_messages")
 }
 
