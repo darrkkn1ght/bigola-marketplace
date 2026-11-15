@@ -63,7 +63,6 @@ services:
   - type: web
     name: bigola-web
     runtime: static
-    region: frankfurt
     branch: main
     buildCommand: npm ci && npm run build --workspace=@bigola/shared && npm run build --workspace=@bigola/web
     staticPublishPath: apps/web/out
