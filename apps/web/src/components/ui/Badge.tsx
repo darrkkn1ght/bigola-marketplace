@@ -19,9 +19,9 @@ const DOT_CLASSES: Record<BadgeTone, string> = {
 export function StatusBadge({ label, tone = "neutral" }: { label: string; tone?: BadgeTone }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold tracking-tight ${TONE_CLASSES[tone]}`}
+      className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[11px] font-semibold tracking-tight ${TONE_CLASSES[tone]}`}
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${DOT_CLASSES[tone]}`} />
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT_CLASSES[tone]}`} />
       {label}
     </span>
   );

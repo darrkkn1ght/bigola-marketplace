@@ -313,7 +313,7 @@ export default function OwnerOverviewPage() {
             {/* Worker, Queue & Pipeline Status Bar */}
             {pipelines && (
               <Card title="Worker & Multi-Pipeline Health">
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 text-sm">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5 text-sm">
                   <div className="rounded-lg border border-slate-200 p-3">
                     <p className="text-xs text-slate-500">Live Sending Switch</p>
                     <div className="mt-1">
@@ -374,29 +374,35 @@ export default function OwnerOverviewPage() {
                   </Link>
                 }
               >
-                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   {pipelines.accounts.map((acc) => (
                     <div
                       key={acc.id}
-                      className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 text-xs space-y-2"
+                      className="flex flex-col justify-between rounded-xl border border-slate-200 bg-slate-50/70 p-4 text-xs space-y-3 min-w-0"
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-slate-900">{acc.slotCode}</span>
-                        <StatusBadge
-                          label={acc.connectionStatus}
-                          tone={
-                            acc.connectionStatus === "CONNECTED"
-                              ? "success"
-                              : acc.connectionStatus === "SESSION_EXPIRED"
-                                ? "danger"
-                                : "neutral"
-                          }
-                        />
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="font-display text-sm font-bold text-[#0B1324] break-words">
+                              {acc.slotCode.replaceAll("_", " ")}
+                            </p>
+                            <p className="mt-0.5 text-xs text-slate-600 break-all">
+                              @{acc.lagoslifeUsername ?? "unassigned"}
+                            </p>
+                          </div>
+                          <StatusBadge
+                            label={acc.connectionStatus}
+                            tone={
+                              acc.connectionStatus === "CONNECTED"
+                                ? "success"
+                                : acc.connectionStatus === "SESSION_EXPIRED"
+                                  ? "danger"
+                                  : "neutral"
+                            }
+                          />
+                        </div>
                       </div>
-                      <p className="text-slate-600 truncate">
-                        @{acc.lagoslifeUsername ?? "unassigned"}
-                      </p>
-                      <div className="space-y-1 border-t border-slate-200 pt-2 font-mono-tabular">
+                      <div className="space-y-1.5 border-t border-slate-200 pt-2.5 font-mono-tabular">
                         <div className="flex justify-between">
                           <span className="text-slate-500">Synced:</span>
                           <span className="font-semibold text-slate-900">

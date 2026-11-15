@@ -149,17 +149,17 @@ export default function MarketplacePage() {
         )}
 
         {loading ? (
-          <div className="grid gap-6 lg:grid-cols-12">
-            <div className="lg:col-span-7">
+          <div className="grid gap-6 xl:grid-cols-12">
+            <div className="xl:col-span-7">
               <SkeletonCard rows={4} />
             </div>
-            <div className="lg:col-span-5">
+            <div className="xl:col-span-5">
               <SkeletonCard rows={3} />
             </div>
           </div>
         ) : (
-          <div className="grid gap-6 lg:grid-cols-12 items-start">
-            <div className="lg:col-span-7 space-y-6">
+          <div className="grid gap-6 xl:grid-cols-12 items-start">
+            <div className="xl:col-span-7 min-w-0 space-y-6">
               <Card
                 title="Bulk Currency Calculator"
                 subtitle={`Rate: ${formatNaira(pricePerT)} per 1T • Minimum ${minTrillions}T • 1T increments`}
@@ -296,8 +296,8 @@ export default function MarketplacePage() {
               </Card>
             </div>
 
-            <div className="lg:col-span-5">
-              <div className="sticky top-24 rounded-2xl border border-[#162340] bg-[#0B1324] p-6 text-white shadow-lg">
+            <div className="xl:col-span-5 min-w-0">
+              <div className="xl:sticky xl:top-24 rounded-2xl border border-[#162340] bg-[#0B1324] p-5 sm:p-6 text-white shadow-lg">
                 <div className="flex items-center justify-between border-b border-white/10 pb-3.5">
                   <h2 className="font-display text-base font-bold text-white">Order Summary</h2>
                   <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300 border border-emerald-500/30">
@@ -326,11 +326,11 @@ export default function MarketplacePage() {
                       {recipientUsername.trim() || "Not entered"}
                     </dd>
                   </div>
-                  <div className="border-t border-white/10 pt-4 flex justify-between items-baseline">
+                  <div className="border-t border-white/10 pt-4 flex flex-wrap justify-between items-baseline gap-2">
                     <dt className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                       Total to Transfer
                     </dt>
-                    <dd className="font-display text-2xl font-extrabold text-emerald-400 tabular-nums">
+                    <dd className="font-display text-xl sm:text-2xl font-extrabold text-emerald-400 tabular-nums">
                       {validQuantity ? formatNaira(totalKobo) : "—"}
                     </dd>
                   </div>

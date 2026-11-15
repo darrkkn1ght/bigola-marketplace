@@ -87,9 +87,9 @@ export function AppShell({
   const activeNav = navItems.find((item) => isRouteActive(item.href));
 
   return (
-    <div className="min-h-screen bg-[#F4F6FA] text-[#0B1324] flex">
+    <div className="min-h-screen bg-[#F4F6FA] text-[#0B1324] flex overflow-x-hidden">
       {/* Desktop Deep Navy Command Sidebar */}
-      <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-[#0B1324] text-slate-200 border-r border-[#162340]">
+      <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-[#0B1324] text-slate-200 border-r border-[#162340] max-h-screen">
         <div className="flex h-16 items-center gap-3 border-b border-white/10 px-5">
           <span
             className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-xs font-extrabold tracking-tight text-white shadow-sm ring-1 ring-white/15"
@@ -317,7 +317,7 @@ export function AppShell({
           </div>
         </header>
 
-        <main className="flex-1 px-4 py-6 sm:px-8 sm:py-8 max-w-6xl w-full mx-auto">
+        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8 sm:py-8 max-w-7xl w-full mx-auto min-w-0">
           {children}
         </main>
       </div>

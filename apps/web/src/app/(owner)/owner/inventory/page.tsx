@@ -590,7 +590,7 @@ export default function OwnerInventoryPage() {
       )}
 
       {totals && (
-        <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
             <p className="text-xs font-medium text-slate-500">Total Observed Stock</p>
             <p className="mt-1 text-xl font-bold text-slate-900 tabular-nums">
@@ -661,23 +661,22 @@ export default function OwnerInventoryPage() {
             return (
               <div
                 key={slot.id}
-                className={`flex flex-col justify-between rounded-xl border bg-white p-5 shadow-[0_1px_3px_rgba(11,19,36,0.05)] transition-all duration-200 hover:shadow-[0_6px_18px_rgba(11,19,36,0.07)] ${
-                  isMain
-                    ? "border-[#0B1324]/30 ring-1 ring-[#059669]/25"
-                    : "border-slate-200/90 hover:border-slate-300"
-                }`}
+                className={`flex flex-col justify-between rounded-xl border bg-white p-5 shadow-[0_1px_3px_rgba(11,19,36,0.05)] transition-all duration-200 hover:shadow-[0_6px_18px_rgba(11,19,36,0.07)] ${isMain
+                  ? "border-[#0B1324]/30 ring-1 ring-[#059669]/25"
+                  : "border-slate-200/90 hover:border-slate-300"
+                  }`}
               >
                 <div>
-                  <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-3">
-                    <div>
+                  <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 pb-3">
+                    <div className="min-w-0 flex-1">
                       <span
-                        className={`text-[11px] font-bold uppercase tracking-wider ${
+                        className={`block text-[11px] font-bold uppercase tracking-wider break-words ${
                           isMain ? "text-[#059669]" : "text-indigo-600"
                         }`}
                       >
                         {slotTitle}
                       </span>
-                      <p className="font-mono-tabular text-[11px] text-slate-400">{slot.slotCode}</p>
+                      <p className="font-mono-tabular text-[11px] text-slate-400 break-all">{slot.slotCode}</p>
                     </div>
                     <StatusBadge
                       label={slot.connectionStatus}
@@ -711,11 +710,10 @@ export default function OwnerInventoryPage() {
                   <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                     <StatusBadge label={healthLabel} tone={getStatusTone(healthLabel)} />
                     <span
-                      className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${
-                        slot.eligibleForFulfilment && slot.connectionStatus === "CONNECTED" && !slot.isStale
-                          ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
-                          : "bg-slate-100 text-slate-700 ring-slate-300/60"
-                      }`}
+                      className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${slot.eligibleForFulfilment && slot.connectionStatus === "CONNECTED" && !slot.isStale
+                        ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
+                        : "bg-slate-100 text-slate-700 ring-slate-300/60"
+                        }`}
                     >
                       {slot.eligibleForFulfilment && slot.connectionStatus === "CONNECTED" && !slot.isStale
                         ? "Eligible & Ready"
