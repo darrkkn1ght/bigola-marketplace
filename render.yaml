@@ -24,7 +24,7 @@ services:
     plan: free
     region: frankfurt
     branch: main
-    buildCommand: npm ci && npm run build --workspace=@bigola/shared && npm run db:generate --workspace=@bigola/api && npm run build --workspace=@bigola/api
+    buildCommand: npm ci --include=dev && npm run build --workspace=@bigola/shared && npm run db:generate --workspace=@bigola/api && npm run build --workspace=@bigola/api
     startCommand: npm run start --workspace=@bigola/api
     healthCheckPath: /api/v1/health
     envVars:
@@ -64,7 +64,7 @@ services:
     name: bigola-web
     runtime: static
     branch: main
-    buildCommand: npm ci && npm run build --workspace=@bigola/shared && npm run build --workspace=@bigola/web
+    buildCommand: npm ci --include=dev && npm run build --workspace=@bigola/shared && npm run build --workspace=@bigola/web
     staticPublishPath: apps/web/out
     routes:
       - type: rewrite
