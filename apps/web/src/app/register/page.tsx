@@ -1,10 +1,15 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import {
+  captureReferralFromUrl,
+  clearStoredReferralCode,
+  getStoredReferralCode,
+} from "@/lib/referral";
 import { Button } from "@/components/ui/Button";
 import { AuthLayout } from "@/components/ui/AuthLayout";
 
@@ -13,15 +18,32 @@ function RegisterForm() {
   const searchParams = useSearchParams();
   const { refresh } = useAuth();
 
-  const initialRef = searchParams.get("ref") ?? "";
+  const urlRef = searchParams.get("ref")?.trim() ?? "";
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [lagoslifeUsername, setLagoslifeUsername] = useState("");
-  const [referralCode, setReferralCode] = useState(initialRef);
+  const [referralCode, setReferralCode] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const stored = getStoredReferralCode();
+    if (stored) {
+      setReferralCode(stored);
+    }
+    void captureReferralFromUrl().then((validatedCode) => {
+      if (!active) return;
+      if (validatedCode) {
+        setReferralCode(validatedCode);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [urlRef]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -40,6 +62,7 @@ function RegisterForm() {
         }),
       });
       // Sign in immediately after registration
+      clearStoredReferralCode();
       await apiRequest("/auth/login", {
         method: "POST",
         body: JSON.stringify({ email: email.trim(), password }),

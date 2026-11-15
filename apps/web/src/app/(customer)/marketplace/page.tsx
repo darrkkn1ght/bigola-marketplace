@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ONE_TRILLION } from "@bigola/shared";
 import { apiRequest } from "@/lib/api";
+import { captureReferralFromUrl } from "@/lib/referral";
 import { formatNaira, formatTrillions } from "@/lib/format";
 import { CustomerShell } from "@/components/CustomerShell";
 import { Card } from "@/components/ui/Card";
@@ -67,6 +68,7 @@ export default function MarketplacePage() {
   }, []);
 
   useEffect(() => {
+    void captureReferralFromUrl();
     void loadData();
   }, [loadData]);
 

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { apiRequest } from "./api";
 import { roleHomePath } from "./format";
+import { captureReferralFromUrl } from "./referral";
 
 export interface AuthUser {
   userId: string;
@@ -47,6 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    void captureReferralFromUrl();
     void refresh();
   }, [refresh]);
 
@@ -90,9 +92,17 @@ export function RequireRole({
   useEffect(() => {
     if (loading) return;
     if (!user) {
-      const next = encodeURIComponent(pathname || "/");
-      router.replace(`/login?next=${next}`);
-      return;
+      let cancelled = false;
+      void (async () => {
+        // Capture & validate ?ref= before redirecting away from /marketplace?ref=CODE.
+        await captureReferralFromUrl();
+        if (cancelled) return;
+        const next = encodeURIComponent(pathname || "/");
+        router.replace(`/login?next=${next}`);
+      })();
+      return () => {
+        cancelled = true;
+      };
     }
     if (user.role === "OWNER" && (!user.mfaEnabled || !user.mfaVerified)) {
       router.replace("/login?mfa=required");
