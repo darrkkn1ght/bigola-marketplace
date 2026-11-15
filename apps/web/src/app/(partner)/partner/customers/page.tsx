@@ -8,6 +8,8 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { OrderStatusBadge, StatusBadge } from "@/components/ui/Badge";
 import { SlideOver } from "@/components/ui/SlideOver";
+import { SkeletonCard } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 
 interface PartnerCustomer {
   id: string;
@@ -48,6 +50,7 @@ export default function PartnerCustomersPage() {
   const [historyCustomer, setHistoryCustomer] = useState<PartnerCustomer | null>(null);
   const [customerOrders, setCustomerOrders] = useState<CustomerOrderRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const { pushToast } = useToast();
 
   const loadCustomers = useCallback(async (q: string) => {
     setLoading(true);
@@ -83,6 +86,7 @@ export default function PartnerCustomersPage() {
         }),
       });
       setNotice(`Registered ${fullName.trim()} under your permanent attribution.`);
+      pushToast({ title: "Offline customer registered", tone: "success" });
       setRegisterOpen(false);
       setFullName("");
       setEmail("");
@@ -116,7 +120,9 @@ export default function PartnerCustomersPage() {
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">My Customers</h1>
+            <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
+              My Customers
+            </h1>
             <p className="mt-1 text-sm text-slate-600">
               Search attributed customers, register offline buyers, and inspect purchase history.
             </p>
@@ -158,9 +164,19 @@ export default function PartnerCustomersPage() {
           </form>
 
           {loading ? (
-            <p className="text-sm text-slate-500">Loading customers…</p>
+            <div className="space-y-3">
+              <SkeletonCard />
+              <SkeletonCard />
+            </div>
           ) : customers.length === 0 ? (
-            <p className="text-sm text-slate-500">No attributed customers match your filter.</p>
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-8 text-center">
+              <p className="font-display text-sm font-semibold text-[#0B1324]">
+                No attributed customers found
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Share your referral link or register an offline customer to get started.
+              </p>
+            </div>
           ) : (
             <div className="divide-y divide-slate-100">
               {customers.map((c) => (

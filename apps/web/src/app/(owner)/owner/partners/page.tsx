@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { Button, CopyButton } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
 import { SlideOver } from "@/components/ui/SlideOver";
+import { useToast } from "@/components/ui/Toast";
 
 interface PartnerRow {
   id: string;
@@ -57,6 +58,7 @@ export default function OwnerPartnersPage() {
   );
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const { pushToast } = useToast();
 
   // Invite Partner Drawer
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -207,6 +209,7 @@ export default function OwnerPartnersPage() {
         }),
       });
       setNotice("OPay proposal submitted. Account-holding Partner must confirm before it takes effect.");
+      pushToast({ title: "OPay proposal submitted", tone: "success" });
       setOpayOpen(false);
       setBankReason("");
       setAccountNumber("");
@@ -228,6 +231,7 @@ export default function OwnerPartnersPage() {
         }),
       });
       setNotice("Attribution conflict resolved.");
+      pushToast({ title: "Attribution conflict resolved", tone: "success" });
       await loadData();
     } catch (err) {
       setError((err as Error).message);
@@ -239,7 +243,9 @@ export default function OwnerPartnersPage() {
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Partners & OPay Governance</h1>
+            <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
+              Partners &amp; OPay Governance
+            </h1>
             <p className="mt-1 text-sm text-slate-600">
               Provision Partner accounts, manage verifier permissions, propose OPay changes, and resolve attribution conflicts.
             </p>

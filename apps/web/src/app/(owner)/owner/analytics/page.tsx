@@ -6,6 +6,7 @@ import { formatNaira, formatTrillions } from "@/lib/format";
 import { OwnerShell } from "@/components/OwnerShell";
 import { Card, StatCard } from "@/components/ui/Card";
 import { StatusBadge } from "@/components/ui/Badge";
+import { SkeletonCard } from "@/components/ui/Skeleton";
 
 interface AnalyticsResponse {
   summary: {
@@ -76,8 +77,10 @@ export default function OwnerAnalyticsPage() {
     <OwnerShell>
       <div className="space-y-6">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Business Intelligence</h1>
-          <p className="text-sm text-slate-500">
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
+            Business Intelligence
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
             Reversal-aware financial revenue, refund liabilities, retention, and partner performance.
           </p>
         </div>
@@ -85,6 +88,15 @@ export default function OwnerAnalyticsPage() {
         {error && (
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
             {error}
+          </div>
+        )}
+
+        {!data && !error && (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
           </div>
         )}
 
@@ -145,7 +157,7 @@ export default function OwnerAnalyticsPage() {
                           </div>
                           <div className="h-2 w-full rounded-full bg-slate-100">
                             <div
-                              className="h-2 rounded-full bg-indigo-600"
+                              className="h-2 rounded-full bg-[#059669]"
                               style={{ width: `${pct}%` }}
                             />
                           </div>

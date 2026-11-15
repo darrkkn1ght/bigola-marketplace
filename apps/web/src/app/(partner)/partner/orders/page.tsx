@@ -9,6 +9,8 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { OrderStatusBadge } from "@/components/ui/Badge";
 import { SlideOver } from "@/components/ui/SlideOver";
+import { SkeletonCard } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 
 interface PartnerCustomerOption {
   id: string;
@@ -42,6 +44,7 @@ export default function PartnerOrdersPage() {
   const [trillions, setTrillions] = useState(10);
   const [recipient, setRecipient] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const { pushToast } = useToast();
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -91,6 +94,7 @@ export default function PartnerOrdersPage() {
       setNotice(
         `Offline order ${res.order.orderNumber} reserved (Ref: ${res.order.paymentReference}).`
       );
+      pushToast({ title: "Offline order reserved", description: res.order.orderNumber, tone: "success" });
       setDrawerOpen(false);
       setRecipient("");
       await loadData();
@@ -106,7 +110,9 @@ export default function PartnerOrdersPage() {
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Partner Orders</h1>
+            <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
+              Partner Orders
+            </h1>
             <p className="mt-1 text-sm text-slate-600">
               Create central offline orders for your attributed customers and track status.
             </p>
@@ -129,9 +135,19 @@ export default function PartnerOrdersPage() {
 
         <Card>
           {loading ? (
-            <p className="text-sm text-slate-500">Loading orders…</p>
+            <div className="space-y-3">
+              <SkeletonCard />
+              <SkeletonCard />
+            </div>
           ) : orders.length === 0 ? (
-            <p className="text-sm text-slate-500">No partner orders found.</p>
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-8 text-center">
+              <p className="font-display text-sm font-semibold text-[#0B1324]">
+                No partner orders found
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Create an offline order or share your referral link to start tracking sales.
+              </p>
+            </div>
           ) : (
             <div className="divide-y divide-slate-100">
               {orders.map((ord) => (

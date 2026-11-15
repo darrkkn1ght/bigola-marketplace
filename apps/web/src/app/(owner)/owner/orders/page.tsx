@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
 import { SlideOver } from "@/components/ui/SlideOver";
+import { SkeletonCard } from "@/components/ui/Skeleton";
 import { apiRequest } from "@/lib/api";
 import { formatDateTime, formatNaira, formatTrillions, type BadgeTone } from "@/lib/format";
 
@@ -796,10 +797,10 @@ export default function OwnerOrdersPage() {
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">
+            <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
               All Orders &amp; Multi-Account Disbursement Desk
             </h1>
-            <p className="text-sm text-slate-600">
+            <p className="mt-1 text-sm text-slate-600">
               Authorize single or split fulfilment across all 5 LagosLife accounts (100B max chunks, 30.5s per-account cooldown), monitor live chunk delivery, and resolve exceptions.
             </p>
           </div>
@@ -833,9 +834,9 @@ export default function OwnerOrdersPage() {
                 key={f.label}
                 type="button"
                 onClick={() => setStatusFilter(f.value)}
-                className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
+                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
                   active
-                    ? "border border-indigo-600 bg-indigo-50 text-indigo-700"
+                    ? "border border-[#0B1324] bg-[#0B1324] text-white"
                     : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                 }`}
               >
@@ -847,9 +848,19 @@ export default function OwnerOrdersPage() {
 
         <Card>
           {loading ? (
-            <p className="py-8 text-center text-sm text-slate-500">Loading orders...</p>
+            <div className="space-y-3 py-2">
+              <SkeletonCard />
+              <SkeletonCard />
+            </div>
           ) : orders.length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-500">No orders match this filter.</p>
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 py-10 px-6 text-center">
+              <p className="font-display text-sm font-semibold text-[#0B1324]">
+                No orders match this filter
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Try selecting a different status filter above.
+              </p>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">

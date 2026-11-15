@@ -7,6 +7,8 @@ import { Card, StatCard } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { OrderStatusBadge, StatusBadge } from "@/components/ui/Badge";
 import { SlideOver } from "@/components/ui/SlideOver";
+import { SkeletonCard } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 
 interface ReceivingAccount {
   id: string;
@@ -152,6 +154,7 @@ export function VerificationDeskPanel({ isOwner }: { isOwner: boolean }) {
   const [manualAmountNaira, setManualAmountNaira] = useState("");
   const [decisionReason, setDecisionReason] = useState("");
   const [acting, setActing] = useState(false);
+  const { pushToast } = useToast();
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -227,7 +230,9 @@ export function VerificationDeskPanel({ isOwner }: { isOwner: boolean }) {
           })),
         }),
       });
-      setNotice(`Uploaded ${kept.length} filtered transaction line(s). Unchecked personal lines stayed local.`);
+      const msg = `Uploaded ${kept.length} filtered transaction line(s). Unchecked personal lines stayed local.`;
+      setNotice(msg);
+      pushToast({ title: "Statement lines uploaded", description: `${kept.length} line(s) added`, tone: "success" });
       setLocalLines([]);
       await loadData();
     } catch (err) {
@@ -274,9 +279,9 @@ export function VerificationDeskPanel({ isOwner }: { isOwner: boolean }) {
           body: JSON.stringify(payload),
         }
       );
-      setNotice(
-        `Credit recorded. Order status: ${res.orderStatus} (Cumulative verified: ${formatNaira(res.cumulativeCreditsKobo)}).`
-      );
+      const msg = `Credit recorded. Order status: ${res.orderStatus} (Cumulative verified: ${formatNaira(res.cumulativeCreditsKobo)}).`;
+      setNotice(msg);
+      pushToast({ title: "Payment verified", description: `Order ${res.orderStatus}`, tone: "success" });
       setSelectedOrder(null);
       await loadData();
     } catch (err) {
@@ -303,6 +308,7 @@ export function VerificationDeskPanel({ isOwner }: { isOwner: boolean }) {
         }),
       });
       setNotice("Payment proof rejected.");
+      pushToast({ title: "Payment proof rejected", tone: "info" });
       setSelectedOrder(null);
       await loadData();
     } catch (err) {
@@ -329,6 +335,7 @@ export function VerificationDeskPanel({ isOwner }: { isOwner: boolean }) {
         }),
       });
       setNotice("Verified credit reversed in full and commission adjusted.");
+      pushToast({ title: "Credit reversed", tone: "info" });
       setSelectedOrder(null);
       await loadData();
     } catch (err) {
@@ -460,9 +467,19 @@ export function VerificationDeskPanel({ isOwner }: { isOwner: boolean }) {
         subtitle="Select an order to link confirmed OPay statement credits, approve partial/split payments, or reject invalid proofs."
       >
         {loading ? (
-          <p className="text-sm text-slate-500">Loading verification queue…</p>
+          <div className="space-y-3">
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
         ) : queue.length === 0 ? (
-          <p className="text-sm text-slate-500">No orders currently awaiting verification.</p>
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-8 text-center">
+            <p className="font-display text-sm font-semibold text-[#0B1324]">
+              Verification queue is clear
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Orders awaiting bank-credit confirmation will appear here automatically.
+            </p>
+          </div>
         ) : (
           <div className="divide-y divide-slate-100">
             {queue.map((ord) => (

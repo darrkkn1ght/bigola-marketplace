@@ -7,6 +7,7 @@ import { PartnerShell } from "@/components/PartnerShell";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
+import { useToast } from "@/components/ui/Toast";
 
 interface PartnerBankAccount {
   id: string;
@@ -40,6 +41,7 @@ export default function PartnerSettingsPage() {
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const { pushToast } = useToast();
 
   const loadData = useCallback(async () => {
     try {
@@ -74,11 +76,11 @@ export default function PartnerSettingsPage() {
         method: "POST",
         body: JSON.stringify({ approve, reason }),
       });
-      setNotice(
-        approve
-          ? "OPay receiving account change confirmed and applied."
-          : "OPay receiving account change rejected."
-      );
+      const msg = approve
+        ? "OPay receiving account change confirmed and applied."
+        : "OPay receiving account change rejected.";
+      setNotice(msg);
+      pushToast({ title: msg, tone: approve ? "success" : "info" });
       setReasons((prev) => ({ ...prev, [requestId]: "" }));
       await loadData();
     } catch (err) {
@@ -90,7 +92,9 @@ export default function PartnerSettingsPage() {
     <PartnerShell>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Settings & OPay Dual-Control</h1>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
+            Settings &amp; OPay Dual-Control
+          </h1>
           <p className="mt-1 text-sm text-slate-600">
             Review your account permissions and confirm or reject Owner proposals affecting your OPay receiving account.
           </p>

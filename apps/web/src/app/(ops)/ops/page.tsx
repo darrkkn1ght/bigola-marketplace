@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { OrderStatusBadge } from "@/components/ui/Badge";
 import { SlideOver } from "@/components/ui/SlideOver";
+import { useToast } from "@/components/ui/Toast";
 
 interface OpsOrderRow {
   id: string;
@@ -41,6 +42,7 @@ export default function OpsOrdersPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const { pushToast } = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -82,7 +84,9 @@ export default function OpsOrdersPage() {
           notes,
         }),
       });
-      setSuccess(`Manual fulfilment confirmed for ${selectedOrder.orderNumber}.`);
+      const msg = `Manual fulfilment confirmed for ${selectedOrder.orderNumber}.`;
+      setSuccess(msg);
+      pushToast({ title: "Manual fulfilment confirmed", description: selectedOrder.orderNumber, tone: "success" });
       setSelectedOrder(null);
       setExternalReference("");
       setNotes("");
@@ -98,8 +102,10 @@ export default function OpsOrdersPage() {
     <OpsShell>
       <div className="space-y-6">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Operations Orders & Fulfilment</h1>
-          <p className="text-sm text-slate-500">
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
+            Operations Orders &amp; Fulfilment
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
             Track order status and record manual LagosLife deliveries when authorized (DISBURSEMENT_ENABLED=false).
           </p>
         </div>

@@ -51,8 +51,10 @@ export default function OwnerAuditLogsPage() {
     <OwnerShell>
       <div className="space-y-6">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Operational Audit Logs</h1>
-          <p className="text-sm text-slate-500">
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
+            Operational Audit Logs
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
             Immutable record of administrative actions, manual fulfilments, refunds, and inventory syncs.
           </p>
         </div>

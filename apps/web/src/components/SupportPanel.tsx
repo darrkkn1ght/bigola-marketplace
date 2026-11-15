@@ -6,6 +6,8 @@ import { formatDateTime } from "@/lib/format";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
+import { SkeletonCard } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 
 interface TicketMessage {
   id: string;
@@ -63,6 +65,7 @@ export function SupportPanel({
   const [isInternal, setIsInternal] = useState(false);
   const [nextStatus, setNextStatus] = useState("IN_REVIEW");
   const [resolutionSummary, setResolutionSummary] = useState("");
+  const { pushToast } = useToast();
 
   const loadTickets = useCallback(async () => {
     setLoading(true);
@@ -105,6 +108,7 @@ export function SupportPanel({
       setSubject("");
       setBody("");
       setOrderId("");
+      pushToast({ title: "Support ticket opened", tone: "success" });
       await loadTickets();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create ticket.");
@@ -128,6 +132,7 @@ export function SupportPanel({
       });
       setReplyBody("");
       setIsInternal(false);
+      pushToast({ title: isInternal ? "Internal note added" : "Reply sent", tone: "success" });
       await loadTickets();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not post reply.");
@@ -150,6 +155,7 @@ export function SupportPanel({
         }),
       });
       setResolutionSummary("");
+      pushToast({ title: `Ticket updated to ${nextStatus.replaceAll("_", " ")}`, tone: "success" });
       await loadTickets();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update ticket status.");
@@ -167,11 +173,14 @@ export function SupportPanel({
       )}
 
       {(mode === "CUSTOMER" || mode === "PARTNER") && (
-        <Card title="Open a Support Request or Order Dispute">
-          <form onSubmit={handleCreateTicket} className="grid gap-3 md:grid-cols-2">
+        <Card
+          title="Open a Support Request or Order Dispute"
+          subtitle="Direct escalation to Big Ola operations with full order and transfer context."
+        >
+          <form onSubmit={handleCreateTicket} className="grid gap-4 md:grid-cols-2">
             {mode === "PARTNER" && (
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
+                <label className="block text-xs font-semibold text-[#0B1324] mb-1.5">
                   Attributed Customer ID (UUID)
                 </label>
                 <input
@@ -179,16 +188,16 @@ export function SupportPanel({
                   onChange={(e) => setCustomerId(e.target.value)}
                   required
                   placeholder="Customer UUID"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-[#0B1324] focus:outline-none focus:ring-2 focus:ring-[#0B1324]/10"
                 />
               </div>
             )}
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Category</label>
+              <label className="block text-xs font-semibold text-[#0B1324] mb-1.5">Category</label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
+                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-[#0B1324] focus:outline-none focus:ring-2 focus:ring-[#0B1324]/10"
               >
                 <option value="PAYMENT_COMPLAINT">Payment Complaint</option>
                 <option value="ORDER_DISPUTE">Order Dispute</option>
@@ -197,13 +206,13 @@ export function SupportPanel({
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">
+              <label className="block text-xs font-semibold text-[#0B1324] mb-1.5">
                 Priority
               </label>
               <select
                 value={priority}
                 onChange={(e) => setPriority(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
+                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-[#0B1324] focus:outline-none focus:ring-2 focus:ring-[#0B1324]/10"
               >
                 <option value="LOW">Low</option>
                 <option value="MEDIUM">Medium</option>
@@ -212,29 +221,29 @@ export function SupportPanel({
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">
+              <label className="block text-xs font-semibold text-[#0B1324] mb-1.5">
                 Order ID (optional UUID)
               </label>
               <input
                 value={orderId}
                 onChange={(e) => setOrderId(e.target.value)}
                 placeholder="Optional Order UUID"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-[#0B1324] focus:outline-none focus:ring-2 focus:ring-[#0B1324]/10"
               />
             </div>
             <div className="md:col-span-2">
-              <label className="block text-xs font-medium text-slate-600 mb-1">Subject</label>
+              <label className="block text-xs font-semibold text-[#0B1324] mb-1.5">Subject</label>
               <input
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
                 required
                 minLength={3}
                 placeholder="Short summary of your issue"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-[#0B1324] focus:outline-none focus:ring-2 focus:ring-[#0B1324]/10"
               />
             </div>
             <div className="md:col-span-2">
-              <label className="block text-xs font-medium text-slate-600 mb-1">Details</label>
+              <label className="block text-xs font-semibold text-[#0B1324] mb-1.5">Details</label>
               <textarea
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
@@ -242,12 +251,12 @@ export function SupportPanel({
                 minLength={3}
                 rows={3}
                 placeholder="Provide transfer reference, amount, or order context..."
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-[#0B1324] focus:outline-none focus:ring-2 focus:ring-[#0B1324]/10"
               />
             </div>
             <div className="md:col-span-2">
               <Button type="submit" disabled={submitting}>
-                {submitting ? 'Submitting...' : 'Submit Support Request'}
+                {submitting ? "Submitting..." : "Submit Support Request"}
               </Button>
             </div>
           </form>
@@ -255,28 +264,38 @@ export function SupportPanel({
       )}
 
       <div className="grid gap-6 lg:grid-cols-5">
-        <Card title="Tickets" className="lg:col-span-2">
+        <Card title="Tickets" subtitle={`${tickets.length} conversation${tickets.length === 1 ? "" : "s"}`} className="lg:col-span-2">
           {loading ? (
-            <p className="text-sm text-slate-500">Loading tickets...</p>
+            <div className="space-y-3">
+              <SkeletonCard />
+              <SkeletonCard />
+            </div>
           ) : tickets.length === 0 ? (
-            <p className="text-sm text-slate-500">No support tickets yet.</p>
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-6 text-center">
+              <p className="font-display text-sm font-semibold text-[#0B1324]">No support tickets yet</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Any payment or delivery questions opened above will appear here.
+              </p>
+            </div>
           ) : (
-            <div className="divide-y divide-slate-100">
+            <div className="space-y-2">
               {tickets.map((t) => (
                 <button
                   key={t.id}
                   type="button"
                   onClick={() => setSelected(t)}
-                  className={`w-full text-left py-3 px-2 rounded-lg transition-colors ${
-                    selected?.id === t.id ? "bg-slate-100" : "hover:bg-slate-50"
+                  className={`w-full text-left p-3 rounded-xl border transition-all ${
+                    selected?.id === t.id
+                      ? "border-[#0B1324] bg-[#0B1324]/[0.03] shadow-xs"
+                      : "border-slate-200/80 bg-white hover:border-slate-300 hover:bg-slate-50"
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-xs font-semibold text-slate-700">
+                    <span className="font-mono-tabular text-xs font-semibold text-[#0B1324]">
                       {t.ticketNumber}
                     </span>
                     <StatusBadge
-                      label={t.status}
+                      label={t.status.replaceAll("_", " ")}
                       tone={
                         t.status === "RESOLVED" || t.status === "CLOSED"
                           ? "success"
@@ -286,7 +305,7 @@ export function SupportPanel({
                       }
                     />
                   </div>
-                  <p className="mt-1 text-sm font-medium text-slate-900 truncate">{t.subject}</p>
+                  <p className="mt-1.5 text-sm font-semibold text-[#0B1324] truncate">{t.subject}</p>
                   <p className="mt-0.5 text-xs text-slate-500">
                     {t.category.replaceAll("_", " ")} · {t.priority}
                     {t.order ? ` · Order ${t.order.orderNumber}` : ""}
@@ -302,7 +321,12 @@ export function SupportPanel({
           className="lg:col-span-3"
         >
           {!selected ? (
-            <p className="text-sm text-slate-500">Select a ticket to view messages and updates.</p>
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-8 text-center">
+              <p className="font-display text-sm font-semibold text-[#0B1324]">Select a ticket</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Choose a ticket from the list to view messages, resolutions, and reply.
+              </p>
+            </div>
           ) : (
             <div className="space-y-4">
               {selected.resolutionSummary && (

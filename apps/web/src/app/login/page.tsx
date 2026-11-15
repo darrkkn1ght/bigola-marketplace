@@ -7,6 +7,7 @@ import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { roleHomePath } from "@/lib/format";
 import { Button, CopyButton } from "@/components/ui/Button";
+import { AuthLayout } from "@/components/ui/AuthLayout";
 
 function LoginForm() {
   const router = useRouter();
@@ -136,30 +137,42 @@ function LoginForm() {
     }
   }
 
-  return (
-    <div className="min-h-screen bg-[#F8FAFC] flex flex-col justify-center px-4 py-12">
-      <div className="mx-auto w-full max-w-md">
-        <div className="mb-8 text-center">
-          <Link href="/" className="inline-flex items-center gap-2.5">
-            <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-[#059669] text-sm font-bold text-white">
-              BO
-            </span>
-            <span className="text-lg font-semibold text-slate-900">Big Ola Marketplace</span>
-          </Link>
-          <p className="mt-2 text-sm text-slate-500">
-            {step === "CREDENTIALS" && "Sign in to your Customer, Partner, or Owner account"}
-            {step === "MFA_VERIFY" && "Owner Two-Factor Verification"}
-            {step === "MFA_SETUP" && "Set Up Mandatory Owner 2FA"}
-            {step === "MFA_RECOVERY_CODES" && "Save Your One-Time Recovery Codes"}
-          </p>
-        </div>
+  const subtitleText =
+    step === "CREDENTIALS"
+      ? "Sign in to your Customer, Partner, or Owner account"
+      : step === "MFA_VERIFY"
+        ? "Owner Two-Factor Verification"
+        : step === "MFA_SETUP"
+          ? "Set Up Mandatory Owner 2FA"
+          : "Save Your One-Time Recovery Codes";
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs">
-          {error && (
-            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-700">
-              {error}
-            </div>
-          )}
+  return (
+    <AuthLayout
+      title="Welcome back"
+      subtitle={subtitleText}
+      footer={
+        <>
+          <p>
+            New customer?{" "}
+            <Link href="/register" className="font-semibold text-emerald-400 hover:underline">
+              Create an account
+            </Link>
+          </p>
+          <p>
+            Have a Partner invite or reset token?{" "}
+            <Link href="/reset-password" className="font-medium text-slate-300 hover:text-white hover:underline">
+              Set your password
+            </Link>
+          </p>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-700">
+            {error}
+          </div>
+        )}
 
           {step === "CREDENTIALS" && (
             <form onSubmit={handleLogin} className="space-y-4">
@@ -300,24 +313,8 @@ function LoginForm() {
               </button>
             </form>
           )}
-        </div>
-
-        <div className="mt-6 text-center text-xs text-slate-500 space-y-2">
-          <p>
-            New customer?{" "}
-            <Link href="/register" className="font-medium text-[#059669] hover:underline">
-              Create an account
-            </Link>
-          </p>
-          <p>
-            Have a Partner invite or reset token?{" "}
-            <Link href="/reset-password" className="font-medium text-slate-700 hover:underline">
-              Set your password
-            </Link>
-          </p>
-        </div>
       </div>
-    </div>
+    </AuthLayout>
   );
 }
 
@@ -325,7 +322,7 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center text-sm text-slate-500">
+        <div className="min-h-screen bg-[#0B1324] flex items-center justify-center text-sm text-slate-300">
           Loading sign-in…
         </div>
       }

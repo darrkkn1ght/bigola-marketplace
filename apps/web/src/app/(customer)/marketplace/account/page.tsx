@@ -6,6 +6,7 @@ import { CustomerShell } from "@/components/CustomerShell";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
+import { useToast } from "@/components/ui/Toast";
 
 interface CustomerProfile {
   id: string;
@@ -26,6 +27,7 @@ export default function CustomerAccountPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { pushToast } = useToast();
 
   useEffect(() => {
     apiRequest<{ profile: CustomerProfile }>("/customer/profile")
@@ -54,6 +56,7 @@ export default function CustomerAccountPage() {
       });
       setProfile(res.profile);
       setMessage("Profile updated.");
+      pushToast({ title: "Profile updated", tone: "success" });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -65,7 +68,9 @@ export default function CustomerAccountPage() {
     <CustomerShell>
       <div className="space-y-6 max-w-2xl">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Account & Profile</h1>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
+            Account &amp; Profile
+          </h1>
           <p className="mt-1 text-sm text-slate-600">
             Keep your default LagosLife username and contact details up to date.
           </p>

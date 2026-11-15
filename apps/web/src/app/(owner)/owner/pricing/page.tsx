@@ -8,6 +8,7 @@ import { OwnerShell } from "@/components/OwnerShell";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
+import { useToast } from "@/components/ui/Toast";
 
 interface BulkPricingInfo {
   priceKoboPerTrillion: string;
@@ -36,6 +37,7 @@ export default function OwnerPricingPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const { pushToast } = useToast();
 
   const loadPricing = useCallback(async () => {
     try {
@@ -75,6 +77,7 @@ export default function OwnerPricingPage() {
         }),
       });
       setNotice("Bulk pricing updated. Existing orders retain their immutable pricing snapshots.");
+      pushToast({ title: "Bulk pricing updated", tone: "success" });
       setBulkReason("");
       await loadPricing();
     } catch (err) {
@@ -88,7 +91,9 @@ export default function OwnerPricingPage() {
     <OwnerShell>
       <div className="space-y-6 max-w-4xl">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Pricing Management</h1>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
+            Pricing Management
+          </h1>
           <p className="mt-1 text-sm text-slate-600">
             Configure bulk currency pricing. Existing orders keep immutable price snapshots at reservation time.
           </p>

@@ -8,6 +8,7 @@ import { OwnerShell } from "@/components/OwnerShell";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
+import { useToast } from "@/components/ui/Toast";
 
 interface AuditLogRow {
   id: string;
@@ -28,6 +29,7 @@ export default function OwnerSettingsPage() {
   const [logs, setLogs] = useState<AuditLogRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const { pushToast } = useToast();
 
   const loadSettings = useCallback(async () => {
     try {
@@ -60,6 +62,7 @@ export default function OwnerSettingsPage() {
         body: JSON.stringify({ ...payload, reason: policyReason.trim() }),
       });
       setNotice(`${label} policy updated.`);
+      pushToast({ title: `${label} policy updated`, tone: "success" });
       setPolicyReason("");
       await loadSettings();
     } catch (err) {
@@ -71,7 +74,9 @@ export default function OwnerSettingsPage() {
     <OwnerShell>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Settings, Policies & Security</h1>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
+            Settings, Policies &amp; Security
+          </h1>
           <p className="mt-1 text-sm text-slate-600">
             Configure reservation expiry, inventory freshness, hoarding limits, and inspect the immutable audit log.
           </p>

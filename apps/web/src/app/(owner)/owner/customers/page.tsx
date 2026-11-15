@@ -72,7 +72,9 @@ export default function OwnerCustomersPage() {
     <OwnerShell>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Customer Directory</h1>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
+            Customer Directory
+          </h1>
           <p className="mt-1 text-sm text-slate-600">
             Search all marketplace buyers, inspect attribution category, and issue password reset links when requested.
           </p>

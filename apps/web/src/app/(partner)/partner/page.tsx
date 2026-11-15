@@ -8,6 +8,7 @@ import { PartnerShell } from "@/components/PartnerShell";
 import { Card, StatCard } from "@/components/ui/Card";
 import { Button, CopyButton } from "@/components/ui/Button";
 import { OrderStatusBadge, StatusBadge } from "@/components/ui/Badge";
+import { SkeletonCard } from "@/components/ui/Skeleton";
 
 interface PartnerDashboardData {
   partner: {
@@ -74,7 +75,7 @@ export default function PartnerOverviewPage() {
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">
+            <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
               {dashboard?.partner.displayName ?? "Partner Workspace"}
             </h1>
             <p className="mt-1 text-sm text-slate-600">
@@ -90,15 +91,18 @@ export default function PartnerOverviewPage() {
         </div>
 
         {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
             {error}
           </div>
         )}
 
         {loading ? (
-          <Card>
-            <p className="text-sm text-slate-500">Loading partner metrics…</p>
-          </Card>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
         ) : (
           dashboard && (
             <>

@@ -4,8 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { CustomerShell } from "@/components/CustomerShell";
 import { Card } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { Button, CopyButton } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
+import { SkeletonCard } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 import { apiRequest } from "@/lib/api";
 import { formatDateTime, formatNaira, formatTrillions, type BadgeTone } from "@/lib/format";
 
@@ -146,6 +148,7 @@ export default function OrderDetailClient() {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { pushToast } = useToast();
 
   // Payment proof submission state (aligned with POST /orders/:orderId/payment-proof)
   const [receivingBankAccountId, setReceivingBankAccountId] = useState("");
@@ -231,6 +234,7 @@ export default function OrderDetailClient() {
       setSuccessMsg(
         "Payment proof submitted! Our verification desk will confirm bank credit before queuing your currency transfer."
       );
+      pushToast({ title: "Payment proof submitted", tone: "success" });
       setBankReference("");
       await loadOrderAndProgress(true);
     } catch (err) {
@@ -254,6 +258,7 @@ export default function OrderDetailClient() {
       });
       setConfirmCancelOpen(false);
       setSuccessMsg("Order cancelled and reserved inventory released.");
+      pushToast({ title: "Order cancelled", tone: "info" });
       await loadOrderAndProgress(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to cancel order.");
@@ -265,7 +270,10 @@ export default function OrderDetailClient() {
   if (loading) {
     return (
       <CustomerShell>
-        <p className="py-12 text-center text-sm text-slate-500">Loading order details...</p>
+        <div className="mx-auto max-w-3xl space-y-4">
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
       </CustomerShell>
     );
   }
@@ -314,18 +322,21 @@ export default function OrderDetailClient() {
             <button
               type="button"
               onClick={() => router.push("/marketplace/orders")}
-              className="text-xs font-medium text-indigo-600 hover:underline"
+              className="text-xs font-semibold text-[#059669] hover:underline"
             >
               &larr; Back to My Orders
             </button>
-            <h1 className="mt-1 text-2xl font-bold text-slate-900">Order {order.orderNumber}</h1>
-            <p className="text-xs text-slate-500">
-              Payment Reference:{" "}
-              <span className="font-mono font-semibold text-slate-800">
+            <h1 className="mt-1 font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
+              Order {order.orderNumber}
+            </h1>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+              <span>Payment Reference:</span>
+              <span className="font-mono-tabular font-semibold text-[#0B1324]">
                 {order.paymentReference}
-              </span>{" "}
-              &middot; Created {formatDateTime(order.createdAt)}
-            </p>
+              </span>
+              <CopyButton value={order.paymentReference} label="Copy" />
+              <span>&middot; Created {formatDateTime(order.createdAt)}</span>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -356,12 +367,12 @@ export default function OrderDetailClient() {
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
               <div>
-                <h2 className="text-sm font-bold text-slate-900">
+                <h2 className="font-display text-sm font-bold text-[#0B1324]">
                   Payment Confirmation &amp; Fulfilment Overview
                 </h2>
                 <p className="text-xs text-slate-500">
                   LagosLife Recipient:{" "}
-                  <strong className="text-indigo-700">@{order.recipientLagoslifeUsername}</strong>
+                  <strong className="text-[#059669]">@{order.recipientLagoslifeUsername}</strong>
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -434,10 +445,10 @@ export default function OrderDetailClient() {
                 <div
                   className={`h-full transition-all duration-300 ${
                     order.status === "COMPLETED"
-                      ? "bg-emerald-600"
+                      ? "bg-[#059669]"
                       : activeJob?.status === "PAUSED"
                         ? "bg-amber-500"
-                        : "bg-indigo-600"
+                        : "bg-[#0B1324]"
                   }`}
                   style={{ width: `${overallPercent}%` }}
                 />
@@ -466,7 +477,7 @@ export default function OrderDetailClient() {
                   <strong>@{order.recipientLagoslifeUsername}</strong> on LagosLife.
                 </div>
               ) : order.status === "DISBURSING" || order.status === "PARTIALLY_FULFILLED" ? (
-                <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-xs font-medium text-indigo-900">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs font-medium text-[#0B1324]">
                   {activeJob?.status === "PAUSED"
                     ? `Transfer is temporarily paused at ${formatGameCurrency(deliveredUnits)} delivered while our operations team verifies the next chunk. Remaining ${formatGameCurrency(remainingUnits)} is safely reserved.`
                     : `Delivery in Progress: ${formatGameCurrency(deliveredUnits)} delivered so far; ${formatGameCurrency(remainingUnits)} remaining. Transfers run in 100B chunks with a 30.5-second game cooldown between transfers.`}
@@ -510,29 +521,32 @@ export default function OrderDetailClient() {
               </div>
 
               {instructions?.receivingAccounts && instructions.receivingAccounts.length > 0 && (
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {instructions.receivingAccounts.map((acc) => (
                     <div
                       key={acc.id}
                       onClick={() => setReceivingBankAccountId(acc.id)}
-                      className={`cursor-pointer rounded-xl border p-3 text-xs transition ${
+                      className={`cursor-pointer rounded-xl border p-3.5 text-xs transition ${
                         receivingBankAccountId === acc.id
-                          ? "border-indigo-500 bg-indigo-50/50 ring-1 ring-indigo-500/20"
+                          ? "border-[#059669] bg-emerald-50/40 ring-1 ring-[#059669]/20"
                           : "border-slate-200 bg-slate-50 hover:bg-slate-100"
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="font-bold text-slate-900">{acc.bankName}</span>
+                        <span className="font-bold text-[#0B1324]">{acc.bankName}</span>
                         {acc.isDefault && (
-                          <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-800">
+                          <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
                             Recommended
                           </span>
                         )}
                       </div>
-                      <div className="mt-1 font-mono text-sm font-bold text-indigo-700">
-                        {acc.accountNumber}
+                      <div className="mt-1.5 flex items-center justify-between gap-2">
+                        <span className="font-mono-tabular text-sm font-bold text-[#0B1324]">
+                          {acc.accountNumber}
+                        </span>
+                        <CopyButton value={acc.accountNumber} label="Copy" />
                       </div>
-                      <div className="text-slate-600">{acc.accountName}</div>
+                      <div className="mt-0.5 text-slate-600">{acc.accountName}</div>
                     </div>
                   ))}
                 </div>

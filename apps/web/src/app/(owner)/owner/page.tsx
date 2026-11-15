@@ -8,6 +8,7 @@ import { OwnerShell } from "@/components/OwnerShell";
 import { Card, StatCard } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { OrderStatusBadge, StatusBadge } from "@/components/ui/Badge";
+import { SkeletonCard } from "@/components/ui/Skeleton";
 
 interface AccountabilityData {
   paymentsVerified: {
@@ -171,7 +172,7 @@ export default function OwnerOverviewPage() {
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">
+            <h1 className="font-display text-2xl font-extrabold tracking-tight text-[#0B1324]">
               Operations &amp; Business Command Center
             </h1>
             <p className="mt-1 text-sm text-slate-600">
@@ -212,9 +213,12 @@ export default function OwnerOverviewPage() {
         )}
 
         {loading ? (
-          <Card>
-            <p className="text-sm text-slate-500">Loading Owner dashboard…</p>
-          </Card>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
         ) : (
           <>
             {/* Top Business & Stock KPIs */}

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiRequest } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
+import { AuthLayout } from "@/components/ui/AuthLayout";
 
 function ResetPasswordForm() {
   const router = useRouter();
@@ -46,31 +47,28 @@ function ResetPasswordForm() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] flex flex-col justify-center px-4 py-12">
-      <div className="mx-auto w-full max-w-md">
-        <div className="mb-8 text-center">
-          <Link href="/" className="inline-flex items-center gap-2.5">
-            <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-[#059669] text-sm font-bold text-white">
-              BO
-            </span>
-            <span className="text-lg font-semibold text-slate-900">Set Your Password</span>
+    <AuthLayout
+      title="Set Your Password"
+      subtitle="Enter your one-time invite or password reset token"
+      footer={
+        <p>
+          <Link href="/login" className="font-semibold text-emerald-400 hover:underline">
+            Back to Sign in
           </Link>
-          <p className="mt-2 text-sm text-slate-500">
-            Enter your one-time invite or password reset token
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs space-y-4">
-          {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-700">
-              {error}
-            </div>
-          )}
-          {success && (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs text-emerald-800">
-              {success}
-            </div>
-          )}
+        </p>
+      }
+    >
+      <div className="space-y-4">
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-700">
+            {error}
+          </div>
+        )}
+        {success && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs font-medium text-emerald-800">
+            {success}
+          </div>
+        )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -121,15 +119,8 @@ function ResetPasswordForm() {
               {loading ? "Updating password…" : "Save Password & Sign in"}
             </Button>
           </form>
-        </div>
-
-        <p className="mt-6 text-center text-xs text-slate-500">
-          <Link href="/login" className="font-medium text-[#059669] hover:underline">
-            Back to Sign in
-          </Link>
-        </p>
       </div>
-    </div>
+    </AuthLayout>
   );
 }
 
@@ -137,7 +128,7 @@ export default function ResetPasswordPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center text-sm text-slate-500">
+        <div className="min-h-screen bg-[#0B1324] flex items-center justify-center text-sm text-slate-300">
           Loading…
         </div>
       }
