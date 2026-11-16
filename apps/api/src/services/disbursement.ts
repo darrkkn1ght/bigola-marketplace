@@ -641,22 +641,28 @@ export class DisbursementService {
           },
         });
 
-        await tx.disbursementChunk.createMany({
-          data: chunkDrafts.map((draft, idx) => ({
-            jobId: job.id,
-            sourceAccountId: draft.sourceAccountId,
-            recipientUsername: encodedRecipient,
-            amount: draft.amount.toString(),
-            idempotencyKey: `disb_${job.id}_c${idx + 1}_${draft.slotCode.toLowerCase()}`,
-            status: DisbursementChunkStatus.PENDING,
-            attemptCount: 0,
-          })),
-        });
+        const chunkPayloads = chunkDrafts.map((draft, idx) => ({
+          jobId: job.id,
+          sourceAccountId: draft.sourceAccountId,
+          recipientUsername: encodedRecipient,
+          amount: draft.amount.toString(),
+          idempotencyKey: `disb_${job.id}_c${idx + 1}_${draft.slotCode.toLowerCase()}`,
+          status: DisbursementChunkStatus.PENDING,
+          attemptCount: 0,
+        }));
 
-        const createdChunks = await tx.disbursementChunk.findMany({
-          where: { jobId: job.id },
-          orderBy: { createdAt: "asc" },
-        });
+        let createdChunks;
+        if (typeof tx.disbursementChunk.createMany === "function") {
+          await tx.disbursementChunk.createMany({ data: chunkPayloads });
+          createdChunks = await tx.disbursementChunk.findMany({
+            where: { jobId: job.id },
+            orderBy: { createdAt: "asc" },
+          });
+        } else {
+          createdChunks = await Promise.all(
+            chunkPayloads.map((data) => tx.disbursementChunk.create({ data }))
+          );
+        }
 
         if (order.status === OrderStatus.READY_FOR_FULFILMENT) {
           await tx.order.update({
