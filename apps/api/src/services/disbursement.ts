@@ -516,7 +516,11 @@ export class DisbursementService {
           );
         }
 
-        if (matchedAccount.slotCode && !VALID_SLOT_CODES.has(matchedAccount.slotCode)) {
+        if (
+          matchedAccount.slotCode &&
+          !VALID_SLOT_CODES.has(matchedAccount.slotCode) &&
+          !/^RESERVE_[A-Z0-9_]+$/.test(matchedAccount.slotCode)
+        ) {
           throw new DisbursementError(
             400,
             "INVALID_ACCOUNT_SLOT",
@@ -1098,34 +1102,39 @@ export class DisbursementService {
       }
     }
 
-    for (const [accountId, chunk] of firstChunkPerAccount.entries()) {
-      const latestJob = await this.prisma.disbursementJob.findUnique({ where: { id: job.id } });
-      if (!latestJob || latestJob.status !== DisbursementJobStatus.RUNNING) {
-        break;
-      }
+    // Execute one runnable chunk per distinct source account CONCURRENTLY so all selected accounts send at once
+    const outcomes = await Promise.all(
+      Array.from(firstChunkPerAccount.entries()).map(async ([accountId, chunk]) => {
+        const latestJob = await this.prisma.disbursementJob.findUnique({ where: { id: job.id } });
+        if (!latestJob || latestJob.status !== DisbursementJobStatus.RUNNING) {
+          return "SKIPPED";
+        }
 
-      const [locked, cooldownMs] = await Promise.all([
-        this.coordinator.isAccountLocked(accountId),
-        this.coordinator.getRemainingCooldownMs(accountId),
-      ]);
-      if (locked || cooldownMs > 0) {
-        continue;
-      }
+        const [locked, cooldownMs] = await Promise.all([
+          this.coordinator.isAccountLocked(accountId),
+          this.coordinator.getRemainingCooldownMs(accountId),
+        ]);
+        if (locked || cooldownMs > 0) {
+          return "SKIPPED";
+        }
 
-      const outcome = await this.executeSingleChunk(job.id, job.orderId, chunk.id, {
-        actorUserId: input.actorUserId,
-        pin: input.pinByAccountId?.[accountId],
-      });
+        return this.executeSingleChunk(job.id, job.orderId, chunk.id, {
+          actorUserId: input.actorUserId,
+          pin: input.pinByAccountId?.[accountId],
+        });
+      })
+    );
 
-      if (
+    const shouldPause = outcomes.some(
+      (outcome) =>
         outcome === "PAUSED_AMBIGUOUS" ||
         outcome === "PAUSED_SESSION_EXPIRED" ||
         outcome === "PAUSED_PIN_REQUIRED" ||
         outcome === "PAUSED_TWO_FACTOR_REQUIRED" ||
         outcome === "PAUSED_TERMINAL_FAILURE"
-      ) {
-        return { job: await this.getJobDetail(job.id), nextDelayMs: null };
-      }
+    );
+    if (shouldPause) {
+      return { job: await this.getJobDetail(job.id), nextDelayMs: null };
     }
 
     // Re-evaluate remaining runnable chunks to compute next BullMQ delay if needed

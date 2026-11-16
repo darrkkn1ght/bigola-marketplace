@@ -655,19 +655,76 @@ export default function OwnerOrdersPage() {
     };
   }, [detail, inventorySlots, selectedSlots, splitBillionsBySlot]);
 
+  const splitEvenlyAcrossSlots = (slotSelection: Record<string, boolean>) => {
+    const selectedRows = allocationAnalysis.rows.filter(
+      (r) => slotSelection[r.slotCode] && r.maxSpendableForOrder > 0n
+    );
+    if (selectedRows.length === 0) return;
+
+    const totalRemainingB = allocationAnalysis.remainingOrderUnits / ONE_BILLION;
+    let remainingB = totalRemainingB;
+    const allocatedBBySlot = new Map<string, bigint>();
+    for (const r of selectedRows) allocatedBBySlot.set(r.slotCode, 0n);
+
+    // Water-fill evenly across selected accounts up to each account's maxSpendableForOrder
+    let active = [...selectedRows];
+    while (remainingB > 0n && active.length > 0) {
+      const share = remainingB / BigInt(active.length);
+      const step = share > 0n ? share : 1n;
+      let progressed = false;
+      const nextActive: typeof active = [];
+      for (const r of active) {
+        if (remainingB <= 0n) break;
+        const maxB = r.maxSpendableForOrder / ONE_BILLION;
+        const curB = allocatedBBySlot.get(r.slotCode) ?? 0n;
+        const roomB = maxB > curB ? maxB - curB : 0n;
+        const takeB = roomB >= step ? step : roomB;
+        const actualTake = takeB > remainingB ? remainingB : takeB;
+        if (actualTake > 0n) {
+          allocatedBBySlot.set(r.slotCode, curB + actualTake);
+          remainingB -= actualTake;
+          progressed = true;
+        }
+        if (roomB > actualTake) {
+          nextActive.push(r);
+        }
+      }
+      if (!progressed) break;
+      active = nextActive;
+    }
+
+    setSplitBillionsBySlot((prev) => {
+      const next = { ...prev };
+      for (const r of allocationAnalysis.rows) {
+        if (slotSelection[r.slotCode]) {
+          const b = allocatedBBySlot.get(r.slotCode) ?? 0n;
+          next[r.slotCode] = b > 0n ? b.toString() : "";
+        } else {
+          next[r.slotCode] = "";
+        }
+      }
+      return next;
+    });
+  };
+
   const handleToggleSlot = (slotCode: string, checked: boolean) => {
-    setSelectedSlots((prev) => ({ ...prev, [slotCode]: checked }));
-    if (checked && !splitBillionsBySlot[slotCode]) {
-      // Default to remaining unallocated up to slot max spendable
-      const row = allocationAnalysis.rows.find((r) => r.slotCode === slotCode);
-      const rem = allocationAnalysis.unallocatedUnits;
-      const cap =
-        row && row.maxSpendableForOrder > 0n && row.maxSpendableForOrder < rem
-          ? row.maxSpendableForOrder
-          : rem;
-      const defaultB = cap / ONE_BILLION;
-      if (defaultB > 0n) {
-        setSplitBillionsBySlot((prev) => ({ ...prev, [slotCode]: defaultB.toString() }));
+    const nextSelected = { ...selectedSlots, [slotCode]: checked };
+    setSelectedSlots(nextSelected);
+    if (checked) {
+      if (allocationAnalysis.unallocatedUnits === 0n) {
+        // Rebalance evenly across all checked slots so newly checked accounts actually receive chunks
+        splitEvenlyAcrossSlots(nextSelected);
+      } else if (!splitBillionsBySlot[slotCode]) {
+        const row = allocationAnalysis.rows.find((r) => r.slotCode === slotCode);
+        const rem = allocationAnalysis.unallocatedUnits;
+        const cap =
+          row && row.maxSpendableForOrder > 0n && row.maxSpendableForOrder < rem
+            ? row.maxSpendableForOrder
+            : rem;
+        const defaultB = cap / ONE_BILLION;
+        if (defaultB > 0n) {
+          setSplitBillionsBySlot((prev) => ({ ...prev, [slotCode]: defaultB.toString() }));
+        }
       }
     }
     setConfirmAuthorizeOpen(false);
@@ -1504,29 +1561,53 @@ export default function OwnerOrdersPage() {
                             Select any single account or split across multiple accounts. Allocations exceeding available inventory are blocked.
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedSlots({
-                              MAIN_TREASURY: false,
-                              RESERVE_1: false,
-                              RESERVE_2: false,
-                              RESERVE_3: false,
-                              RESERVE_4: false,
-                            });
-                            setSplitBillionsBySlot({
-                              MAIN_TREASURY: "",
-                              RESERVE_1: "",
-                              RESERVE_2: "",
-                              RESERVE_3: "",
-                              RESERVE_4: "",
-                            });
-                            setConfirmAuthorizeOpen(false);
-                          }}
-                          className="text-[11px] font-semibold text-slate-500 hover:text-slate-800"
-                        >
-                          Clear Split
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const anyChecked = Object.values(selectedSlots).some(Boolean);
+                              if (anyChecked) {
+                                splitEvenlyAcrossSlots(selectedSlots);
+                              } else {
+                                const auto: Record<string, boolean> = {};
+                                for (const r of allocationAnalysis.rows) {
+                                  if (r.slotCode !== "MAIN_TREASURY" && r.maxSpendableForOrder > 0n) {
+                                    auto[r.slotCode] = true;
+                                  }
+                                }
+                                setSelectedSlots(auto);
+                                splitEvenlyAcrossSlots(auto);
+                              }
+                              setConfirmAuthorizeOpen(false);
+                            }}
+                            className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900"
+                          >
+                            Split Evenly
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedSlots({
+                                MAIN_TREASURY: false,
+                                RESERVE_1: false,
+                                RESERVE_2: false,
+                                RESERVE_3: false,
+                                RESERVE_4: false,
+                              });
+                              setSplitBillionsBySlot({
+                                MAIN_TREASURY: "",
+                                RESERVE_1: "",
+                                RESERVE_2: "",
+                                RESERVE_3: "",
+                                RESERVE_4: "",
+                              });
+                              setConfirmAuthorizeOpen(false);
+                            }}
+                            className="text-[11px] font-semibold text-slate-500 hover:text-slate-800"
+                          >
+                            Clear Split
+                          </button>
+                        </div>
                       </div>
 
                       {/* 5 Account Selection Rows */}
