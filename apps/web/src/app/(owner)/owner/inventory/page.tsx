@@ -112,6 +112,8 @@ export default function OwnerInventoryPage() {
   const [discrepancies, setDiscrepancies] = useState<DiscrepancyRecord[]>([]);
   const [ledger, setLedger] = useState<LedgerRecord[]>([]);
   const [pinDraftBySlot, setPinDraftBySlot] = useState<Record<string, string>>({});
+  const [replaceSlot, setReplaceSlot] = useState<InventorySlot | null>(null);
+  const [replaceReason, setReplaceReason] = useState("");
   const [pipelineBySlot, setPipelineBySlot] = useState<
     Record<string, { locked: boolean; cooldownRemainingMs: number; activeChunkCount: number }>
   >({});
@@ -422,6 +424,38 @@ export default function OwnerInventoryPage() {
       await loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to clear transaction PIN.");
+    } finally {
+      setBusySlotAction(null);
+    }
+  }
+
+  async function handleReplaceReserveAccount(e: React.FormEvent) {
+    e.preventDefault();
+    if (!replaceSlot) return;
+    if (replaceReason.trim().length < 3) {
+      setError("Enter an audit reason (min 3 chars) to replace this account.");
+      return;
+    }
+    setBusySlotAction(`replace:${replaceSlot.slotCode}`);
+    setError("");
+    setMessage("");
+    try {
+      await apiRequest(`/owner/inventory/accounts/${replaceSlot.slotCode}/replace`, {
+        method: "POST",
+        body: JSON.stringify({
+          confirm: true,
+          reason: replaceReason.trim(),
+        }),
+      });
+      const clearedSlot = replaceSlot;
+      setReplaceSlot(null);
+      setReplaceReason("");
+      setMessage(
+        `${SLOT_TITLES[clearedSlot.slotCode] ?? clearedSlot.slotCode} cleared securely (historical records preserved). Click "Connect Account" on ${clearedSlot.slotCode} to authenticate and verify the new LagosLife account.`
+      );
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to replace reserve account.");
     } finally {
       setBusySlotAction(null);
     }
@@ -821,11 +855,10 @@ export default function OwnerInventoryPage() {
                         : "Needs Session / Sync"}
                     </span>
                     <span
-                      className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${
-                        slot.hasPin
-                          ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
-                          : "bg-amber-50 text-amber-800 ring-amber-600/20"
-                      }`}
+                      className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${slot.hasPin
+                        ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
+                        : "bg-amber-50 text-amber-800 ring-amber-600/20"
+                        }`}
                     >
                       {slot.hasPin ? "PIN Configured" : "No PIN Set"}
                     </span>
@@ -973,6 +1006,24 @@ export default function OwnerInventoryPage() {
                         ? "Enable Account Eligibility"
                         : "Disable Account Eligibility"}
                   </button>
+                  {!isMain && (
+                    <button
+                      type="button"
+                      disabled={
+                        busySlotAction !== null ||
+                        BigInt(slot.reservedForOrders) > 0n ||
+                        Boolean(pipelineBySlot[slot.slotCode]?.locked)
+                      }
+                      onClick={() => {
+                        setReplaceSlot(slot);
+                        setReplaceReason("");
+                        setError("");
+                      }}
+                      className="w-full rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-40 transition-colors cursor-pointer"
+                    >
+                      Replace Account
+                    </button>
+                  )}
                   {slot.sessionConnected && (
                     <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 space-y-1.5">
                       <div className="flex items-center justify-between text-[10px] font-semibold text-slate-600">
@@ -1370,6 +1421,65 @@ export default function OwnerInventoryPage() {
             {submitting ? "Saving..." : "Save Slot Username"}
           </button>
         </form>
+      </SlideOver>
+
+      {/* Replace Reserve Account Confirmation SlideOver */}
+      <SlideOver
+        open={Boolean(replaceSlot)}
+        onClose={() => {
+          setReplaceSlot(null);
+          setReplaceReason("");
+        }}
+        title={`Replace ${replaceSlot ? (SLOT_TITLES[replaceSlot.slotCode] ?? replaceSlot.slotCode) : "Reserve Account"}`}
+        subtitle="Clears the old session, transaction PIN, and username so you can connect a new LagosLife account. Historical transactions, disbursement chunks, and audit logs are preserved."
+      >
+        {replaceSlot && (
+          <form onSubmit={handleReplaceReserveAccount} className="space-y-4">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
+              <p className="font-semibold">
+                Current Account: {replaceSlot.lagoslifeUsername ? `@${replaceSlot.lagoslifeUsername}` : "Unconfigured"}
+              </p>
+              <p>
+                This will immediately clear the encrypted session cookie, saved transaction PIN, and slot username, and mark {replaceSlot.slotCode} as UNCONFIGURED until you connect and verify the replacement account.
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700">
+                Audit Reason (required, min 3 chars)
+              </label>
+              <input
+                type="text"
+                required
+                minLength={3}
+                value={replaceReason}
+                onChange={(e) => setReplaceReason(e.target.value)}
+                placeholder="e.g. Rotating reserve account to new LagosLife wallet"
+                className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={busySlotAction !== null || replaceReason.trim().length < 3}
+                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+              >
+                {busySlotAction === `replace:${replaceSlot.slotCode}`
+                  ? "Replacing..."
+                  : "Confirm Replace Account"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setReplaceSlot(null);
+                  setReplaceReason("");
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
       </SlideOver>
 
       {/* Sync Balance SlideOver */}

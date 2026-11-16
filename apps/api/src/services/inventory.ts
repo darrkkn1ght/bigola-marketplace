@@ -1,7 +1,10 @@
 import {
+  DisbursementChunkStatus,
   GameAccountHealth,
+  GameAccountRole,
   InventoryDiscrepancyStatus,
   InventoryEntryType,
+  InventoryReservationStatus,
   NotificationType,
   Prisma,
   PrismaClient,
@@ -1191,6 +1194,126 @@ export class InventoryService {
       slotCode: slot.slotCode,
       hasPin: false,
       pinUpdatedAt: null,
+    };
+  }
+
+  async replaceReserveAccount(input: {
+    actorUserId: string;
+    slotCode: string;
+    reason: string;
+    isAccountLockedFn?: (accountId: string) => Promise<boolean>;
+    ipAddress?: string;
+  }) {
+    const cleanReason = input.reason.trim();
+    if (cleanReason.length < 3) {
+      throw new InventoryError(400, "INVALID_REASON", "An audit reason (min 3 chars) is required.");
+    }
+
+    const slot = await this.prisma.gameAccount.findUnique({
+      where: { slotCode: input.slotCode },
+    });
+    if (!slot) {
+      throw new InventoryError(404, "SLOT_NOT_FOUND", `Game account slot ${input.slotCode} not found.`);
+    }
+
+    if (slot.slotCode === "MAIN_TREASURY" || slot.accountRole !== GameAccountRole.RESERVE) {
+      throw new InventoryError(
+        403,
+        "MAIN_TREASURY_REPLACEMENT_FORBIDDEN",
+        "MAIN_TREASURY cannot be replaced. Only reserve slots (RESERVE_1–RESERVE_4) can be replaced."
+      );
+    }
+
+    if (input.isAccountLockedFn && (await input.isAccountLockedFn(slot.id))) {
+      throw new InventoryError(
+        409,
+        "ACCOUNT_TRANSFER_LOCK_ACTIVE",
+        `Cannot replace ${slot.slotCode} while an active transfer lock is held.`
+      );
+    }
+
+    const activeReservationCount = await this.prisma.inventoryReservation.count({
+      where: {
+        gameAccountId: slot.id,
+        status: InventoryReservationStatus.ACTIVE,
+      },
+    });
+    if (BigInt(slot.reservedForOrders.toFixed(0)) > 0n || activeReservationCount > 0) {
+      throw new InventoryError(
+        409,
+        "ACTIVE_RESERVATIONS_EXIST",
+        `Cannot replace ${slot.slotCode} while it has active order reservations.`
+      );
+    }
+
+    const activeChunkCount = await this.prisma.disbursementChunk.count({
+      where: {
+        sourceAccountId: slot.id,
+        status: {
+          in: [
+            DisbursementChunkStatus.PENDING,
+            DisbursementChunkStatus.IN_FLIGHT,
+            DisbursementChunkStatus.FAILED_RETRYABLE,
+            DisbursementChunkStatus.AMBIGUOUS_MANUAL_REVIEW,
+          ],
+        },
+      },
+    });
+    if (activeChunkCount > 0) {
+      throw new InventoryError(
+        409,
+        "ACTIVE_DISBURSEMENT_CHUNKS_EXIST",
+        `Cannot replace ${slot.slotCode} while ${activeChunkCount} disbursement chunk(s) are pending or in progress.`
+      );
+    }
+
+    const priorMeta = getSafeSessionMetadata(slot.encryptedSessionBundle, this.encryptionKeyHex);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.gameAccount.update({
+        where: { id: slot.id },
+        data: {
+          lagoslifeUsername: null,
+          encryptedSessionBundle: null,
+          healthStatus: GameAccountHealth.UNCONFIGURED,
+          lastKnownBalance: "0",
+          lastSyncedAt: null,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorUserId: input.actorUserId,
+          actionType: "LAGOSLIFE_ACCOUNT_REPLACED",
+          targetEntity: "game_accounts",
+          targetId: slot.id,
+          beforeState: {
+            slotCode: slot.slotCode,
+            lagoslifeUsername: slot.lagoslifeUsername,
+            healthStatus: slot.healthStatus,
+            hadSession: priorMeta.connected,
+            hadPin: priorMeta.hasPin,
+          },
+          afterState: {
+            slotCode: slot.slotCode,
+            lagoslifeUsername: null,
+            healthStatus: GameAccountHealth.UNCONFIGURED,
+            sessionCleared: true,
+            pinCleared: true,
+          },
+          reason: cleanReason,
+          ipAddress: input.ipAddress,
+        },
+      });
+    });
+
+    return {
+      replaced: true,
+      slotCode: slot.slotCode,
+      lagoslifeUsername: null,
+      healthStatus: GameAccountHealth.UNCONFIGURED,
+      sessionConnected: false,
+      hasPin: false,
     };
   }
 

@@ -2183,6 +2183,44 @@ export function registerOwnerRoutes(
   );
 
   app.post(
+    "/api/v1/owner/inventory/accounts/:slotCode/replace",
+    { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_ACCOUNT_TOPOLOGY_MANAGE)] },
+    async (request, reply) => {
+      const svc = getInvSvc();
+      if (!svc) return reply.code(503).send({ error: "Inventory service unavailable." });
+      const { slotCode } = request.params as { slotCode: string };
+      const parsed = z
+        .object({
+          confirm: z.literal(true),
+          reason: z.string().min(3).max(500),
+        })
+        .safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "Explicit confirmation (confirm: true) and audit reason (min 3 chars) are required.",
+        });
+      }
+      try {
+        const { AccountTransferCoordinator } = await import("../services/disbursement.js");
+        const coordinator = new AccountTransferCoordinator(deps.queues?.redis ?? null);
+        const result = await svc.replaceReserveAccount({
+          actorUserId: request.auth!.userId,
+          slotCode,
+          reason: parsed.data.reason,
+          isAccountLockedFn: (accountId) => coordinator.isAccountLocked(accountId),
+          ipAddress: request.ip,
+        });
+        return reply.code(200).send(result);
+      } catch (err) {
+        if (err instanceof InventoryError) {
+          return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+        }
+        throw err;
+      }
+    }
+  );
+
+  app.post(
     "/api/v1/owner/inventory/accounts/:slotCode/verify-session",
     { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_INVENTORY_MANAGE)] },
     async (request, reply) => {
