@@ -6,7 +6,7 @@ import { apiRequest } from "@/lib/api";
 import { formatDateTime, formatNaira, formatTrillions } from "@/lib/format";
 import { OwnerShell } from "@/components/OwnerShell";
 import { Card, StatCard } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { Button, CopyButton } from "@/components/ui/Button";
 import { OrderStatusBadge, StatusBadge } from "@/components/ui/Badge";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 
@@ -154,17 +154,31 @@ export default function OwnerOverviewPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ownerReferral, setOwnerReferral] = useState<{
+    referralCode: string | null;
+    marketplaceUrl: string | null;
+    registerUrl: string | null;
+    attributedCustomersCount: number;
+  } | null>(null);
+  const [requestedRefCode, setRequestedRefCode] = useState("");
+  const [generatingRef, setGeneratingRef] = useState(false);
 
   const loadDashboard = useCallback(async (isManual = false) => {
     if (isManual) setRefreshing(true);
     try {
-      const [acc, inv, ord, conf, pipe, rdy] = await Promise.all([
+      const [acc, inv, ord, conf, pipe, rdy, refRes] = await Promise.all([
         apiRequest<AccountabilityData>("/owner/financial-accountability"),
         apiRequest<InventoryOverview>("/owner/inventory"),
         apiRequest<{ orders: OwnerOrderRow[] }>("/owner/orders"),
         apiRequest<{ conflicts: Array<{ status: string }> }>("/owner/attribution-conflicts"),
         apiRequest<OperationalPipelineResponse>("/owner/operations/pipelines").catch(() => null),
         apiRequest<OwnerReadinessResponse>("/owner/readiness").catch(() => null),
+        apiRequest<{
+          referralCode: string | null;
+          marketplaceUrl: string | null;
+          registerUrl: string | null;
+          attributedCustomersCount: number;
+        }>("/owner/referral").catch(() => null),
       ]);
       setAccountability(acc);
       setInventory(inv);
@@ -172,6 +186,7 @@ export default function OwnerOverviewPage() {
       setConflictsCount(conf.conflicts.filter((c) => c.status === "PENDING").length);
       setPipelines(pipe);
       setReadiness(rdy);
+      setOwnerReferral(refRes);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load Owner dashboard.");
@@ -184,6 +199,35 @@ export default function OwnerOverviewPage() {
   useEffect(() => {
     void loadDashboard(false);
   }, [loadDashboard]);
+
+  async function handleGenerateOwnerReferral(e: React.FormEvent) {
+    e.preventDefault();
+    setGeneratingRef(true);
+    setError(null);
+    try {
+      const res = await apiRequest<{
+        referralCode: string;
+        marketplaceUrl: string;
+        registerUrl: string;
+      }>("/owner/referral/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          requestedCode: requestedRefCode.trim() || undefined,
+        }),
+      });
+      setOwnerReferral({
+        referralCode: res.referralCode,
+        marketplaceUrl: res.marketplaceUrl,
+        registerUrl: res.registerUrl,
+        attributedCustomersCount: ownerReferral?.attributedCustomersCount ?? 0,
+      });
+      setRequestedRefCode("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate Owner referral code.");
+    } finally {
+      setGeneratingRef(false);
+    }
+  }
 
   return (
     <OwnerShell>
@@ -229,6 +273,68 @@ export default function OwnerOverviewPage() {
             {error}
           </div>
         )}
+
+        <Card
+          title="Your Owner Referral Code &amp; Links"
+          subtitle="Permanent referral code for Big Ola's own customer acquisitions (separate from Partner commissions)."
+        >
+          {ownerReferral?.referralCode ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-3">
+                <div>
+                  <p className="text-xs text-slate-600">
+                    Permanent Owner Code:{" "}
+                    <span className="font-mono-tabular text-sm font-bold text-slate-900">
+                      {ownerReferral.referralCode}
+                    </span>
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Attributed Customers: <strong>{ownerReferral.attributedCustomersCount}</strong>
+                  </p>
+                </div>
+                <CopyButton value={ownerReferral.referralCode} label="Copy Code" />
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 text-xs">
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <span className="truncate font-mono-tabular text-slate-800">
+                    {ownerReferral.registerUrl}
+                  </span>
+                  {ownerReferral.registerUrl && (
+                    <CopyButton value={ownerReferral.registerUrl} label="Copy Register Link" />
+                  )}
+                </div>
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <span className="truncate font-mono-tabular text-slate-800">
+                    {ownerReferral.marketplaceUrl}
+                  </span>
+                  {ownerReferral.marketplaceUrl && (
+                    <CopyButton value={ownerReferral.marketplaceUrl} label="Copy Marketplace Link" />
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={handleGenerateOwnerReferral} className="flex flex-wrap items-end gap-3">
+              <div className="flex-1 min-w-[220px]">
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Optional Custom Code (leave blank for auto-generated OLA-XXXXXX)
+                </label>
+                <input
+                  type="text"
+                  minLength={3}
+                  maxLength={32}
+                  placeholder="e.g. OLA-MAIN"
+                  value={requestedRefCode}
+                  onChange={(e) => setRequestedRefCode(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono-tabular text-sm"
+                />
+              </div>
+              <Button type="submit" variant="owner" disabled={generatingRef}>
+                {generatingRef ? "Generating..." : "Generate Permanent Owner Code"}
+              </Button>
+            </form>
+          )}
+        </Card>
 
         {loading ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

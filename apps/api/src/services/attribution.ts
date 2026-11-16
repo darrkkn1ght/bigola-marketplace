@@ -42,10 +42,138 @@ export class AttributionService {
       where: { referralCode: code },
       select: { id: true, referralCode: true, displayName: true, status: true },
     });
-    if (!partner || partner.status !== PartnerStatus.ACTIVE) {
-      return null;
+    if (partner && partner.status === PartnerStatus.ACTIVE) {
+      return {
+        type: "PARTNER" as const,
+        id: partner.id,
+        referralCode: partner.referralCode,
+        displayName: partner.displayName,
+        status: partner.status,
+      };
     }
-    return partner;
+
+    const owner = await this.prisma.user.findUnique({
+      where: { referralCode: code },
+      select: { id: true, referralCode: true, role: true, isActive: true },
+    });
+    if (owner && owner.role === UserRole.OWNER && owner.isActive && owner.referralCode) {
+      return {
+        type: "OWNER" as const,
+        id: owner.id,
+        referralCode: owner.referralCode,
+        displayName: "Big Ola (Owner)",
+        status: PartnerStatus.ACTIVE,
+      };
+    }
+
+    return null;
+  }
+
+  async generateOwnerReferralCode(input: {
+    ownerUserId: string;
+    requestedCode?: string;
+    ipAddress?: string;
+  }) {
+    const owner = await this.prisma.user.findUnique({
+      where: { id: input.ownerUserId },
+      select: { id: true, role: true, isActive: true, referralCode: true, email: true },
+    });
+    if (!owner || owner.role !== UserRole.OWNER || !owner.isActive) {
+      throw new AttributionError(403, "OWNER_REQUIRED", "Only active Owner accounts can generate an Owner referral code.");
+    }
+    if (owner.referralCode) {
+      throw new AttributionError(
+        409,
+        "OWNER_REFERRAL_ALREADY_EXISTS",
+        "Owner referral code has already been generated and cannot be changed."
+      );
+    }
+
+    const customCode = input.requestedCode ? normalizeReferralCode(input.requestedCode) : null;
+    if (customCode && !/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(customCode)) {
+      throw new AttributionError(
+        400,
+        "INVALID_REFERRAL_CODE_FORMAT",
+        "Referral code must be 3–32 characters (letters, numbers, hyphens, underscores)."
+      );
+    }
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code =
+        attempt === 0 && customCode
+          ? customCode
+          : `OLA-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+
+      const [existingPartner, existingUser] = await Promise.all([
+        this.prisma.partner.findUnique({ where: { referralCode: code }, select: { id: true } }),
+        this.prisma.user.findUnique({ where: { referralCode: code }, select: { id: true } }),
+      ]);
+      if (existingPartner || existingUser) {
+        if (customCode) {
+          throw new AttributionError(409, "REFERRAL_CODE_TAKEN", "That referral code is already in use.");
+        }
+        continue;
+      }
+
+      try {
+        const updated = await this.prisma.$transaction(async (tx) => {
+          const fresh = await tx.user.findUniqueOrThrow({
+            where: { id: owner.id },
+            select: { referralCode: true },
+          });
+          if (fresh.referralCode) {
+            throw new AttributionError(
+              409,
+              "OWNER_REFERRAL_ALREADY_EXISTS",
+              "Owner referral code has already been generated and cannot be changed."
+            );
+          }
+
+          const u = await tx.user.update({
+            where: { id: owner.id },
+            data: { referralCode: code },
+            select: { id: true, referralCode: true },
+          });
+
+          await tx.auditLog.create({
+            data: {
+              actorUserId: owner.id,
+              actionType: "OWNER_REFERRAL_CODE_GENERATED",
+              targetEntity: "USER",
+              targetId: owner.id,
+              afterState: { referralCode: code },
+              reason: "Owner generated permanent referral code",
+              ipAddress: input.ipAddress ?? null,
+            },
+          });
+
+          return u;
+        });
+
+        return {
+          ownerUserId: updated.id,
+          referralCode: updated.referralCode!,
+        };
+      } catch (err) {
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === "P2002" &&
+          !customCode
+        ) {
+          continue;
+        }
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === "P2002" &&
+          customCode
+        ) {
+          throw new AttributionError(409, "REFERRAL_CODE_TAKEN", "That referral code is already in use.");
+        }
+        throw err;
+      }
+    }
+
+    throw new AttributionError(500, "REFERRAL_CODE_GENERATION_FAILED", "Could not generate a unique Owner referral code.");
   }
 
   async registerCustomerOnline(input: {
@@ -103,21 +231,48 @@ export class AttributionService {
         user: { select: { email: true, phone: true } },
       },
     });
-    if (!partner || partner.status !== PartnerStatus.ACTIVE) {
-      throw new AttributionError(400, "INVALID_REFERRAL_CODE", "Referral code is invalid or inactive.");
-    }
 
-    const partnerEmail = partner.user?.email ? normalizeEmail(partner.user.email) : null;
-    const partnerPhone = partner.user?.phone ? normalizePhone(partner.user.phone) : null;
-    if (
-      (partnerEmail && partnerEmail === normalizedEmail) ||
-      (normalizedPhone && partnerPhone && partnerPhone === normalizedPhone)
-    ) {
-      throw new AttributionError(
-        400,
-        "SELF_REFERRAL_NOT_ALLOWED",
-        "You cannot register using your own partner referral code."
-      );
+    let attributedPartner: { id: string; referralCode: string } | null = null;
+    let attributedOwner: { id: string; referralCode: string } | null = null;
+
+    if (partner) {
+      if (partner.status !== PartnerStatus.ACTIVE) {
+        throw new AttributionError(400, "INVALID_REFERRAL_CODE", "Referral code is invalid or inactive.");
+      }
+      const partnerEmail = partner.user?.email ? normalizeEmail(partner.user.email) : null;
+      const partnerPhone = partner.user?.phone ? normalizePhone(partner.user.phone) : null;
+      if (
+        (partnerEmail && partnerEmail === normalizedEmail) ||
+        (normalizedPhone && partnerPhone && partnerPhone === normalizedPhone)
+      ) {
+        throw new AttributionError(
+          400,
+          "SELF_REFERRAL_NOT_ALLOWED",
+          "You cannot register using your own partner referral code."
+        );
+      }
+      attributedPartner = { id: partner.id, referralCode: partner.referralCode };
+    } else {
+      const ownerUser = await this.prisma.user.findUnique({
+        where: { referralCode: effectiveCode },
+        select: { id: true, referralCode: true, role: true, isActive: true, email: true, phone: true },
+      });
+      if (!ownerUser || ownerUser.role !== UserRole.OWNER || !ownerUser.isActive || !ownerUser.referralCode) {
+        throw new AttributionError(400, "INVALID_REFERRAL_CODE", "Referral code is invalid or inactive.");
+      }
+      const ownerEmail = ownerUser.email ? normalizeEmail(ownerUser.email) : null;
+      const ownerPhone = ownerUser.phone ? normalizePhone(ownerUser.phone) : null;
+      if (
+        (ownerEmail && ownerEmail === normalizedEmail) ||
+        (normalizedPhone && ownerPhone && ownerPhone === normalizedPhone)
+      ) {
+        throw new AttributionError(
+          400,
+          "SELF_REFERRAL_NOT_ALLOWED",
+          "You cannot register using your own owner referral code."
+        );
+      }
+      attributedOwner = { id: ownerUser.id, referralCode: ownerUser.referralCode };
     }
 
     const passwordHash = await hashPassword(input.password);
@@ -155,7 +310,7 @@ export class AttributionService {
           },
         });
 
-        const category = partner
+        const category = attributedPartner
           ? CustomerCategory.CATEGORY_A_PARTNER
           : CustomerCategory.CATEGORY_B_BIGOLA;
 
@@ -169,8 +324,9 @@ export class AttributionService {
             lagoslifeUsername: input.lagoslifeUsername?.trim() ?? null,
             lagoslifeUsernameNormalized: normalizedLl,
             category,
-            attributedPartnerId: partner ? partner.id : null,
-            attributedAt: partner ? new Date() : null,
+            attributedPartnerId: attributedPartner ? attributedPartner.id : null,
+            attributedOwnerUserId: attributedOwner ? attributedOwner.id : null,
+            attributedAt: new Date(),
             attributionSource,
           },
         });
@@ -187,6 +343,7 @@ export class AttributionService {
               customerId: customer.id,
               category: customer.category,
               attributedPartnerId: customer.attributedPartnerId,
+              attributedOwnerUserId: customer.attributedOwnerUserId,
               attributionSource: customer.attributionSource,
             },
             ipAddress: input.ipAddress ?? null,
@@ -199,6 +356,7 @@ export class AttributionService {
             id: customer.id,
             category: customer.category,
             attributedPartnerId: customer.attributedPartnerId,
+            attributedOwnerUserId: customer.attributedOwnerUserId,
             attributionSource: customer.attributionSource,
           },
         };
@@ -369,6 +527,17 @@ export class AttributionService {
         attempt === 0 && input.requestedReferralCode
           ? normalizeReferralCode(input.requestedReferralCode)
           : `BGO-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+
+      const ownerCollision = await this.prisma.user.findUnique({
+        where: { referralCode: code },
+        select: { id: true },
+      });
+      if (ownerCollision) {
+        if (attempt === 0 && input.requestedReferralCode) {
+          throw new AttributionError(409, "REFERRAL_CODE_TAKEN", "Requested referral code is already in use.");
+        }
+        continue;
+      }
 
       try {
         return await this.prisma.$transaction(async (tx) => {

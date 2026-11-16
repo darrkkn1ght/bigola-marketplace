@@ -539,6 +539,68 @@ export function registerOwnerRoutes(
   );
 
   app.get(
+    "/api/v1/owner/referral",
+    { preHandler: ownerGuard },
+    async (request, reply) => {
+      if (!deps.prisma) {
+        return reply.code(503).send({ error: "Database service unavailable." });
+      }
+      const owner = await deps.prisma.user.findUnique({
+        where: { id: request.auth!.userId },
+        select: { id: true, referralCode: true },
+      });
+      if (!owner) {
+        return reply.code(404).send({ error: "Owner account not found." });
+      }
+      const attributedCustomersCount = await deps.prisma.customer.count({
+        where: { attributedOwnerUserId: owner.id },
+      });
+      const baseUrl = (process.env.WEB_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
+      return reply.code(200).send({
+        referralCode: owner.referralCode ?? null,
+        marketplaceUrl: owner.referralCode ? `${baseUrl}/marketplace?ref=${owner.referralCode}` : null,
+        registerUrl: owner.referralCode ? `${baseUrl}/register?ref=${owner.referralCode}` : null,
+        attributedCustomersCount,
+      });
+    }
+  );
+
+  app.post(
+    "/api/v1/owner/referral/generate",
+    { preHandler: ownerGuard },
+    async (request, reply) => {
+      if (!deps.attributionService) {
+        return reply.code(503).send({ error: "Attribution service unavailable." });
+      }
+      const bodySchema = z.object({
+        requestedCode: z.string().min(3).max(32).optional(),
+      });
+      const parsed = bodySchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Invalid referral code request.", issues: parsed.error.issues });
+      }
+      try {
+        const result = await deps.attributionService.generateOwnerReferralCode({
+          ownerUserId: request.auth!.userId,
+          requestedCode: parsed.data.requestedCode,
+          ipAddress: request.ip,
+        });
+        const baseUrl = (process.env.WEB_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
+        return reply.code(201).send({
+          referralCode: result.referralCode,
+          marketplaceUrl: `${baseUrl}/marketplace?ref=${result.referralCode}`,
+          registerUrl: `${baseUrl}/register?ref=${result.referralCode}`,
+        });
+      } catch (err) {
+        if (err instanceof AttributionError) {
+          return reply.code(err.statusCode).send({ code: err.code, error: err.message });
+        }
+        throw err;
+      }
+    }
+  );
+
+  app.get(
     "/api/v1/owner/partners",
     { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_PARTNER_MANAGE)] },
     async (_request, reply) => {

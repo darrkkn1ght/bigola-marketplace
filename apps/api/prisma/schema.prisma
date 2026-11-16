@@ -265,12 +265,14 @@ model User {
   mustChangePassword     Boolean  @default(false) @map("must_change_password")
   canConfirmFulfilment   Boolean  @default(false) @map("can_confirm_fulfilment")
   isActive               Boolean  @default(true) @map("is_active")
+  referralCode           String?  @unique @map("referral_code")
   createdAt              DateTime @default(now()) @map("created_at")
   updatedAt              DateTime @updatedAt @map("updated_at")
 
   sessions               UserSession[]
   partnerProfile         Partner?
   customerProfile        Customer?
+  ownerAttributedCustomers Customer[] @relation("OwnerAttributedCustomers")
   verifiedProofs         PaymentProof[]          @relation("ProofVerifiedBy")
   configuredRules        CommissionRule[]        @relation("RuleConfiguredBy")
   inventoryEntries       InventoryLedger[]
@@ -378,6 +380,7 @@ model Customer {
   lagoslifeUsernameNormalized String?            @unique @map("lagoslife_username_normalized")
   category                    CustomerCategory   @default(CATEGORY_B_BIGOLA)
   attributedPartnerId         String?            @map("attributed_partner_id") @db.Uuid
+  attributedOwnerUserId       String?            @map("attributed_owner_user_id") @db.Uuid
   attributedAt                DateTime?          @map("attributed_at")
   attributionSource           AttributionSource? @map("attribution_source")
   createdAt                   DateTime           @default(now()) @map("created_at")
@@ -385,11 +388,13 @@ model Customer {
 
   user                        User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
   attributedPartner           Partner?           @relation(fields: [attributedPartnerId], references: [id], onDelete: Restrict)
+  attributedOwner             User?              @relation("OwnerAttributedCustomers", fields: [attributedOwnerUserId], references: [id], onDelete: Restrict)
   orders                      Order[]
   attributionConflicts        AttributionConflict[]
   supportTickets              SupportTicket[]
 
   @@index([attributedPartnerId])
+  @@index([attributedOwnerUserId])
   @@map("customers")
 }
 
