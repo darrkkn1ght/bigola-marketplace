@@ -127,6 +127,7 @@ const updateBusinessSettingsSchema = z.object({
   maintenanceMessage: z.string().max(400).nullable().optional(),
   customerAvailabilityNote: z.string().max(400).nullable().optional(),
   whatsappNumber: z.string().min(7).max(30).nullable().optional(),
+  whatsappNumberSecondary: z.string().min(7).max(30).nullable().optional(),
   reason: z.string().min(3).max(500),
 });
 
@@ -798,6 +799,10 @@ export function registerOwnerRoutes(
           typeof raw.whatsappNumber === "string" && raw.whatsappNumber.trim()
             ? raw.whatsappNumber.trim()
             : null,
+        whatsappNumberSecondary:
+          typeof raw.whatsappNumberSecondary === "string" && raw.whatsappNumberSecondary.trim()
+            ? raw.whatsappNumberSecondary.trim()
+            : null,
       },
     });
   });
@@ -819,6 +824,7 @@ export function registerOwnerRoutes(
         maintenanceMessage: parsed.data.maintenanceMessage?.trim() || null,
         customerAvailabilityNote: parsed.data.customerAvailabilityNote?.trim() || null,
         whatsappNumber: parsed.data.whatsappNumber?.trim() || null,
+        whatsappNumberSecondary: parsed.data.whatsappNumberSecondary?.trim() || null,
       };
       const before =
         (await deps.platformStore.getSettings()).find((s) => s.key === "business_settings") ?? null;

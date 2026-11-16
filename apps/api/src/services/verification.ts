@@ -529,6 +529,11 @@ export class VerificationService {
       typeof businessVal.whatsappNumber === "string" && businessVal.whatsappNumber.trim()
         ? businessVal.whatsappNumber.trim()
         : null;
+    const whatsappNumberSecondary =
+      typeof businessVal.whatsappNumberSecondary === "string" &&
+      businessVal.whatsappNumberSecondary.trim()
+        ? businessVal.whatsappNumberSecondary.trim()
+        : null;
 
     return {
       orderId: order.id,
@@ -539,6 +544,7 @@ export class VerificationService {
       status: order.status,
       expiresAt: order.expiresAt?.toISOString() ?? null,
       whatsappNumber,
+      whatsappNumberSecondary,
       receivingAccounts: accounts,
     };
   }

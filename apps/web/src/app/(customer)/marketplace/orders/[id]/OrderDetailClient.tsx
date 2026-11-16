@@ -49,6 +49,7 @@ interface PaymentInstructionsResponse {
   status: string;
   expiresAt: string | null;
   whatsappNumber?: string | null;
+  whatsappNumberSecondary?: string | null;
   receivingAccounts: ReceivingBankAccountOption[];
 }
 
@@ -555,14 +556,19 @@ export default function OrderDetailClient() {
               )}
 
               {(() => {
-                const whatsappHref = buildWhatsAppReceiptUrl(instructions?.whatsappNumber, {
+                const details = {
                   orderNumber: order.orderNumber,
                   paymentReference: order.paymentReference,
                   amountDueNaira: formatNaira(order.fiatAmountKobo),
                   gameAmountLabel: formatGameCurrency(requestedUnits),
                   recipientUsername: order.recipientLagoslifeUsername,
-                });
-                if (!whatsappHref) {
+                };
+                const primaryHref = buildWhatsAppReceiptUrl(instructions?.whatsappNumber, details);
+                const secondaryHref = buildWhatsAppReceiptUrl(
+                  instructions?.whatsappNumberSecondary,
+                  details
+                );
+                if (!primaryHref && !secondaryHref) {
                   return (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900">
                       Send your transfer receipt on WhatsApp or submit your bank transfer reference below so we can confirm payment and start delivery.
@@ -574,14 +580,28 @@ export default function OrderDetailClient() {
                     <div className="text-xs font-semibold text-emerald-950">
                       Step 2: Send your OPay transfer receipt on WhatsApp for fast confirmation
                     </div>
-                    <a
-                      href={whatsappHref}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex w-full items-center justify-center rounded-xl bg-[#059669] px-5 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#047857]"
-                    >
-                      SEND PAYMENT RECEIPT ON WHATSAPP
-                    </a>
+                    <div className={`grid gap-2.5 ${primaryHref && secondaryHref ? "sm:grid-cols-2" : "grid-cols-1"}`}>
+                      {primaryHref && (
+                        <a
+                          href={primaryHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex w-full items-center justify-center rounded-xl bg-[#059669] px-5 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#047857]"
+                        >
+                          {secondaryHref ? "SEND RECEIPT ON WHATSAPP (LINE 1)" : "SEND PAYMENT RECEIPT ON WHATSAPP"}
+                        </a>
+                      )}
+                      {secondaryHref && (
+                        <a
+                          href={secondaryHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex w-full items-center justify-center rounded-xl bg-[#0B1324] px-5 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800"
+                        >
+                          {primaryHref ? "SEND RECEIPT ON WHATSAPP (LINE 2)" : "SEND PAYMENT RECEIPT ON WHATSAPP"}
+                        </a>
+                      )}
+                    </div>
                     <p className="text-[11px] text-emerald-900/80">
                       Opens WhatsApp with your Order ID, Payment Reference, Amount, and LagosLife username prefilled.
                     </p>

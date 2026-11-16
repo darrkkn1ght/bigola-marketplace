@@ -198,6 +198,11 @@ export class OrderService {
         typeof businessVal.whatsappNumber === "string" && businessVal.whatsappNumber.trim()
           ? businessVal.whatsappNumber.trim()
           : null,
+      whatsappNumberSecondary:
+        typeof businessVal.whatsappNumberSecondary === "string" &&
+        businessVal.whatsappNumberSecondary.trim()
+          ? businessVal.whatsappNumberSecondary.trim()
+          : null,
     };
 
     const bulkSetting = byKey.has("bulk_pricing") ? { value: byKey.get("bulk_pricing") } : null;
