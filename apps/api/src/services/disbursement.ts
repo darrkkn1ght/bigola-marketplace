@@ -1875,9 +1875,12 @@ export class DisbursementService {
               where: { id: resv.gameAccountId },
             });
             if (otherAcc) {
+              const otherBalance = toBigInt(otherAcc.lastKnownBalance);
               const otherReserved = toBigInt(otherAcc.reservedForOrders);
-              const nextOtherReserved =
+              const rawNextOtherReserved =
                 otherReserved > releaseAmt ? otherReserved - releaseAmt : 0n;
+              const nextOtherReserved =
+                rawNextOtherReserved > otherBalance ? otherBalance : rawNextOtherReserved;
               await tx.gameAccount.update({
                 where: { id: otherAcc.id },
                 data: { reservedForOrders: nextOtherReserved.toString() },
@@ -1920,10 +1923,14 @@ export class DisbursementService {
             : prevBalance > params.chunkAmount
               ? prevBalance - params.chunkAmount
               : 0n;
-        const nextReserved =
+        const rawNextReserved =
           prevReserved > consumedOnSourceAccount
             ? prevReserved - consumedOnSourceAccount
             : 0n;
+        // Clamp reservedForOrders to nextBalance so minor live-balance slippage/fees
+        // cannot trip chk_game_accounts_no_oversell and roll back a confirmed chunk.
+        const nextReserved =
+          nextBalance < rawNextReserved ? nextBalance : rawNextReserved;
 
         await tx.gameAccount.update({
           where: { id: account.id },
