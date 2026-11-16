@@ -179,6 +179,7 @@ export function splitAmountIntoChunks(
 export class AccountTransferCoordinator {
   private readonly memoryLocks = new Map<string, { ownerToken: string; expiresAtMs: number }>();
   private readonly memoryCooldownUntil = new Map<string, number>();
+  private readonly memoryTwoFactorCodes = new Map<string, { value: string; expiresAtMs: number }>();
 
   constructor(
     private readonly redis: Redis | null = null,
@@ -191,6 +192,52 @@ export class AccountTransferCoordinator {
 
   private cooldownKey(accountId: string): string {
     return `bigola:disbursement:cooldown:${accountId}`;
+  }
+
+  private twoFactorKey(jobId: string, accountId: string): string {
+    return `bigola:disbursement:2fa:${jobId}:${accountId}`;
+  }
+
+  async setOneTimeTwoFactorCode(
+    jobId: string,
+    accountId: string,
+    encryptedCode: string,
+    ttlMs: number = 300_000
+  ): Promise<void> {
+    const key = this.twoFactorKey(jobId, accountId);
+    if (this.redis) {
+      try {
+        await this.redis.set(key, encryptedCode, "PX", ttlMs);
+        return;
+      } catch {
+        // Fall through to memory
+      }
+    }
+    this.memoryTwoFactorCodes.set(key, {
+      value: encryptedCode,
+      expiresAtMs: this.nowFn() + ttlMs,
+    });
+  }
+
+  async consumeOneTimeTwoFactorCode(jobId: string, accountId: string): Promise<string | null> {
+    const key = this.twoFactorKey(jobId, accountId);
+    if (this.redis) {
+      try {
+        const val = await this.redis.get(key);
+        if (val) {
+          await this.redis.del(key);
+          return val;
+        }
+      } catch {
+        // Fall through to memory
+      }
+    }
+    const entry = this.memoryTwoFactorCodes.get(key);
+    this.memoryTwoFactorCodes.delete(key);
+    if (!entry || entry.expiresAtMs <= this.nowFn()) {
+      return null;
+    }
+    return entry.value;
   }
 
   async acquireAccountMutex(
@@ -1072,6 +1119,8 @@ export class DisbursementService {
       if (
         outcome === "PAUSED_AMBIGUOUS" ||
         outcome === "PAUSED_SESSION_EXPIRED" ||
+        outcome === "PAUSED_PIN_REQUIRED" ||
+        outcome === "PAUSED_TWO_FACTOR_REQUIRED" ||
         outcome === "PAUSED_TERMINAL_FAILURE"
       ) {
         return { job: await this.getJobDetail(job.id), nextDelayMs: null };
@@ -1351,6 +1400,8 @@ export class DisbursementService {
     | "COOLDOWN_ACTIVE"
     | "PAUSED_AMBIGUOUS"
     | "PAUSED_SESSION_EXPIRED"
+    | "PAUSED_PIN_REQUIRED"
+    | "PAUSED_TWO_FACTOR_REQUIRED"
     | "PAUSED_TERMINAL_FAILURE"
   > {
     if (!this.disbursementEnabled) {
@@ -1499,13 +1550,26 @@ export class DisbursementService {
         },
       });
 
-      // 3. Execute LagosLife POST /api/send
+      // 3. Execute LagosLife POST /api/send with in-memory decrypted PIN and optional one-time 2FA code
+      const accountPin = context?.pin?.trim() || session.transactionPin?.trim() || undefined;
+      let twoStepCode: string | undefined;
+      const encryptedTwoFactor = await this.coordinator.consumeOneTimeTwoFactorCode(jobId, account.id);
+      if (encryptedTwoFactor) {
+        try {
+          const { decryptSensitiveValue } = await import("../lib/crypto.js");
+          twoStepCode = decryptSensitiveValue(encryptedTwoFactor, this.encryptionKeyHex).trim() || undefined;
+        } catch {
+          twoStepCode = undefined;
+        }
+      }
+
       const sendResult = await this.lagosLifeAdapter.sendCurrencyChunk({
         cookie: session.cookie,
         targetId,
         amount: chunkAmount,
         idempotencyKey: chunk.idempotencyKey,
-        pin: context?.pin,
+        pin: accountPin,
+        twoStepCode,
       });
 
       // Case A: Confirmed HTTP 200 success
@@ -1541,7 +1605,31 @@ export class DisbursementService {
         return "RATE_LIMITED";
       }
 
-      // Case C: HTTP 401/403 Session Expired
+      // Case C1: Missing or Incorrect Transaction PIN
+      if (sendResult.outcome === "PIN_REQUIRED") {
+        await this.pauseJobOnAccountError(
+          jobId,
+          chunk.id,
+          account.id,
+          `PIN_REQUIRED:${account.slotCode}:${sendResult.message}`,
+          false
+        );
+        return "PAUSED_PIN_REQUIRED";
+      }
+
+      // Case C2: Optional Two-Step 2FA Challenge Required
+      if (sendResult.outcome === "TWO_FACTOR_REQUIRED") {
+        await this.pauseJobOnAccountError(
+          jobId,
+          chunk.id,
+          account.id,
+          `TWO_FACTOR_REQUIRED:${account.slotCode}:${sendResult.message}`,
+          false
+        );
+        return "PAUSED_TWO_FACTOR_REQUIRED";
+      }
+
+      // Case C3: HTTP 401/403 Session Expired
       if (sendResult.outcome === "SESSION_EXPIRED") {
         await this.pauseJobOnAccountError(
           jobId,
@@ -2021,6 +2109,8 @@ export class DisbursementService {
     actorUserId: string;
     actorRole: UserRole;
     reason?: string;
+    twoFactorCode?: string;
+    slotCode?: string;
     ipAddress?: string;
   }): Promise<SerializedDisbursementJob> {
     if (input.actorRole !== UserRole.OWNER) {
@@ -2057,6 +2147,32 @@ export class DisbursementService {
     const allSucceeded = job.chunks.every(
       (c) => c.status === DisbursementChunkStatus.SUCCEEDED
     );
+
+    const cleanTwoFactor = input.twoFactorCode?.trim();
+    if (cleanTwoFactor && !allSucceeded) {
+      let targetAccountId: string | null = null;
+      if (input.slotCode) {
+        const slotAcc = await this.prisma.gameAccount.findUnique({
+          where: { slotCode: input.slotCode },
+          select: { id: true },
+        });
+        targetAccountId = slotAcc?.id ?? null;
+      }
+      if (!targetAccountId) {
+        const challengeChunk = job.chunks.find(
+          (c) =>
+            c.status === DisbursementChunkStatus.FAILED_RETRYABLE &&
+            typeof c.errorMessage === "string" &&
+            c.errorMessage.startsWith("TWO_FACTOR_REQUIRED:")
+        );
+        targetAccountId = challengeChunk?.sourceAccountId ?? null;
+      }
+      if (targetAccountId) {
+        const { encryptSensitiveValue } = await import("../lib/crypto.js");
+        const encryptedCode = encryptSensitiveValue(cleanTwoFactor, this.encryptionKeyHex);
+        await this.coordinator.setOneTimeTwoFactorCode(job.id, targetAccountId, encryptedCode, 300_000);
+      }
+    }
 
     await this.prisma.$transaction(async (tx) => {
       await tx.disbursementJob.update({

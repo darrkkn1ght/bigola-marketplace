@@ -18,6 +18,8 @@ export const LAGOSLIFE_SEND_COOLDOWN_MS = 30_500;
 export type LagosLifeSendOutcome =
   | "SUCCEEDED"
   | "RATE_LIMITED"
+  | "PIN_REQUIRED"
+  | "TWO_FACTOR_REQUIRED"
   | "SESSION_EXPIRED"
   | "DEFINITIVE_FAILURE"
   | "UNCERTAIN";
@@ -95,6 +97,8 @@ export interface StoredSessionBundle {
   simName: string | null;
   connectedAt: string;
   verifiedAt: string;
+  transactionPin?: string | null;
+  pinUpdatedAt?: string | null;
 }
 
 export interface SafeSessionMetadata {
@@ -104,6 +108,8 @@ export interface SafeSessionMetadata {
   simName: string | null;
   connectedAt: string | null;
   verifiedAt: string | null;
+  hasPin: boolean;
+  pinUpdatedAt: string | null;
 }
 
 export type LagosLifeLoginOutcome =
@@ -226,6 +232,12 @@ export function decodeEncryptedSessionBundle(
         typeof parsed.connectedAt === "string" ? parsed.connectedAt : new Date().toISOString(),
       verifiedAt:
         typeof parsed.verifiedAt === "string" ? parsed.verifiedAt : new Date().toISOString(),
+      transactionPin:
+        typeof parsed.transactionPin === "string" && parsed.transactionPin.trim()
+          ? parsed.transactionPin.trim()
+          : null,
+      pinUpdatedAt:
+        typeof parsed.pinUpdatedAt === "string" ? parsed.pinUpdatedAt : null,
     };
   } catch {
     return null;
@@ -245,6 +257,8 @@ export function getSafeSessionMetadata(
       simName: null,
       connectedAt: null,
       verifiedAt: null,
+      hasPin: false,
+      pinUpdatedAt: null,
     };
   }
   return {
@@ -254,6 +268,8 @@ export function getSafeSessionMetadata(
     simName: decoded.simName ?? null,
     connectedAt: decoded.connectedAt,
     verifiedAt: decoded.verifiedAt,
+    hasPin: Boolean(decoded.transactionPin && decoded.transactionPin.trim()),
+    pinUpdatedAt: decoded.pinUpdatedAt ?? null,
   };
 }
 
@@ -1023,11 +1039,15 @@ export class LagosLifeAdapter {
       to: input.targetId,
       amount: Number(input.amount),
     };
-    if (input.pin) {
-      payload.pin = String(input.pin);
+    const cleanPin = input.pin ? String(input.pin).trim() : "";
+    const cleanTwoStep = input.twoStepCode ? String(input.twoStepCode).trim() : "";
+    const effectivePin = cleanPin || cleanTwoStep;
+    if (effectivePin) {
+      payload.pin = effectivePin;
     }
-    if (input.twoStepCode) {
-      payload.twoStepCode = String(input.twoStepCode);
+    if (cleanTwoStep && cleanTwoStep !== cleanPin) {
+      payload.code = cleanTwoStep;
+      payload.twoStep = cleanTwoStep;
     }
 
     try {
@@ -1079,6 +1099,34 @@ export class LagosLifeAdapter {
           status: 429,
           message,
           retryAfterMs: parseRateLimitWaitMs(message),
+          rawData: data,
+        };
+      }
+
+      const errLower = message.toLowerCase();
+      if (errLower.includes("pin") || errLower.includes("passcode")) {
+        return {
+          outcome: "PIN_REQUIRED",
+          status: res.status,
+          message,
+          rawData: data,
+        };
+      }
+
+      if (
+        errLower.includes("two-step") ||
+        errLower.includes("two step") ||
+        errLower.includes("twofactor") ||
+        errLower.includes("two factor") ||
+        errLower.includes("2fa") ||
+        errLower.includes("verification") ||
+        errLower.includes("challenge") ||
+        errLower.includes("code required")
+      ) {
+        return {
+          outcome: "TWO_FACTOR_REQUIRED",
+          status: res.status,
+          message,
           rawData: data,
         };
       }

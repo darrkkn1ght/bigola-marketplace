@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { calculateBulkOrderQuote, ONE_TRILLION } from "@bigola/shared";
+import {
+  calculateBulkOrderQuote,
+  getRestockingScheduleStatus,
+  ONE_TRILLION,
+  RESTOCKING_ANNOUNCEMENT,
+  type RestockingScheduleStatus,
+} from "@bigola/shared";
 import { apiRequest } from "@/lib/api";
 import { captureReferralFromUrl } from "@/lib/referral";
 import { formatNaira, formatTrillions } from "@/lib/format";
@@ -44,6 +50,7 @@ interface CatalogResponse {
     maintenanceMessage: string | null;
     customerAvailabilityNote: string | null;
   };
+  restockingSchedule?: RestockingScheduleStatus;
   bulk?: BulkPricingInfo;
   bulkPricing?: BulkPricingInfo;
   retail?: RetailPricingInfo;
@@ -60,7 +67,7 @@ interface CatalogResponse {
 export default function MarketplacePage() {
   const router = useRouter();
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
-  const [trillions, setTrillions] = useState(10);
+  const [trillions, setTrillions] = useState(1);
   const [recipientUsername, setRecipientUsername] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -104,9 +111,11 @@ export default function MarketplacePage() {
 
   const minTrillions = bulk
     ? Number(BigInt(bulk.minBulkGameAmount) / ONE_TRILLION)
-    : 10;
+    : 1;
   const pricePerT = bulk ? BigInt(bulk.priceKoboPerTrillion) : 100_000n;
-  const salesEnabled = catalog?.businessSettings?.marketplaceSalesEnabled !== false;
+  const restocking = catalog?.restockingSchedule ?? getRestockingScheduleStatus();
+  const isRestockingClosed = restocking.isRestockingDay;
+  const salesEnabled = catalog?.businessSettings?.marketplaceSalesEnabled !== false && !isRestockingClosed;
   const bulkEnabled = salesEnabled && bulk?.enabled !== false;
   const hasAvailableStock = isFresh && BigInt(reservableAvailable) > 0n;
   let totalKobo = 0n;
@@ -225,7 +234,20 @@ export default function MarketplacePage() {
           </div>
         )}
 
-        {!loading && catalog && !salesEnabled && (
+        <div
+          className={`rounded-xl border px-4 py-3 text-xs font-semibold ${
+            isRestockingClosed
+              ? "border-rose-300 bg-rose-50 text-rose-900"
+              : "border-amber-200 bg-amber-50 text-amber-900"
+          }`}
+        >
+          {RESTOCKING_ANNOUNCEMENT}
+          {isRestockingClosed && restocking.nextSalesDay
+            ? ` Today is ${restocking.lagosWeekday} (Africa/Lagos). New order creation is closed and will reopen automatically on ${restocking.nextSalesDay}.`
+            : ""}
+        </div>
+
+        {!loading && catalog && catalog.businessSettings?.marketplaceSalesEnabled === false && (
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-900">
             {catalog.businessSettings?.maintenanceMessage ??
               "Marketplace sales are temporarily paused for maintenance."}
@@ -268,7 +290,7 @@ export default function MarketplacePage() {
                       Quick Select Quantity
                     </label>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                      {[10, 20, 50, 100].map((preset) => {
+                      {[1, 5, 10, 25].map((preset) => {
                         const active = trillions === preset;
                         return (
                           <button
@@ -361,11 +383,13 @@ export default function MarketplacePage() {
                   >
                     {submitting
                       ? "Reserving Stock…"
-                      : !hasAvailableStock
-                        ? "Stock Temporarily Paused (Sync Pending)"
-                        : !bulkEnabled
-                          ? "Bulk Ordering Temporarily Paused"
-                          : `Reserve ${trillions}T & View OPay Details`}
+                      : isRestockingClosed
+                        ? `Closed for Restocking (${restocking.lagosWeekday})`
+                        : !hasAvailableStock
+                          ? "Stock Temporarily Paused (Sync Pending)"
+                          : !bulkEnabled
+                            ? "Bulk Ordering Temporarily Paused"
+                            : `Reserve ${trillions}T & View OPay Details`}
                   </Button>
                 </form>
               </Card>
@@ -391,10 +415,14 @@ export default function MarketplacePage() {
                             type="button"
                             size="sm"
                             variant="secondary"
-                            disabled={submitting || !hasAvailableStock}
+                            disabled={submitting || !hasAvailableStock || isRestockingClosed || catalog?.businessSettings?.retailOrdersEnabled === false}
                             onClick={() => void handleRetailOrder(pkg.id)}
                           >
-                            {hasAvailableStock ? "Reserve Package" : "Stock Pending"}
+                            {isRestockingClosed
+                              ? "Restocking Day"
+                              : hasAvailableStock
+                                ? "Reserve Package"
+                                : "Stock Pending"}
                           </Button>
                         </div>
                       ))}

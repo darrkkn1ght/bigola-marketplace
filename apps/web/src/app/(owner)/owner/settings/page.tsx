@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { getRestockingScheduleStatus } from "@bigola/shared";
 import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatDateTime } from "@/lib/format";
@@ -226,6 +227,24 @@ export default function OwnerSettingsPage() {
           }
         >
           <form onSubmit={handleSaveBusinessSettings} className="space-y-4">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold">
+                  Weekly Restocking Schedule (Africa/Lagos): Closed every Wednesday &amp; Saturday
+                </span>
+                <StatusBadge
+                  label={
+                    getRestockingScheduleStatus().isRestockingDay
+                      ? `Restocking Day (${getRestockingScheduleStatus().lagosWeekday}) — New Sales Paused`
+                      : `Open (${getRestockingScheduleStatus().lagosWeekday} WAT)`
+                  }
+                  tone={getRestockingScheduleStatus().isRestockingDay ? "warning" : "success"}
+                />
+              </div>
+              <p className="mt-1 text-[11px]">
+                New customer orders are automatically rejected on Wednesdays and Saturdays (Africa/Lagos) and reopen automatically on Thursday/Sunday. Existing paid, authorized, or queued orders and running fulfilment jobs are never disrupted.
+              </p>
+            </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <label className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium text-slate-800">
                 <span>Marketplace Sales</span>

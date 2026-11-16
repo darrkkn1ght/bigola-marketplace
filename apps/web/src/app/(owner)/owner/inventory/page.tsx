@@ -34,6 +34,8 @@ interface InventorySlot {
   lastSyncedAt: string | null;
   sessionConnected: boolean;
   connectionStatus: "CONNECTED" | "SESSION_EXPIRED" | "DISCONNECTED";
+  hasPin?: boolean;
+  pinUpdatedAt?: string | null;
   sessionIdentity: SessionIdentityMeta | null;
   eligibleForFulfilment: boolean;
 }
@@ -109,6 +111,7 @@ export default function OwnerInventoryPage() {
   } | null>(null);
   const [discrepancies, setDiscrepancies] = useState<DiscrepancyRecord[]>([]);
   const [ledger, setLedger] = useState<LedgerRecord[]>([]);
+  const [pinDraftBySlot, setPinDraftBySlot] = useState<Record<string, string>>({});
   const [pipelineBySlot, setPipelineBySlot] = useState<
     Record<string, { locked: boolean; cooldownRemainingMs: number; activeChunkCount: number }>
   >({});
@@ -373,6 +376,54 @@ export default function OwnerInventoryPage() {
       setError(err instanceof Error ? err.message : "Session cookie import failed.");
     } finally {
       setConnectSubmitting(false);
+    }
+  }
+
+  async function handleSaveAccountPin(slotCode: string) {
+    const pinVal = (pinDraftBySlot[slotCode] ?? "").trim();
+    if (pinVal.length < 4 || pinVal.length > 16) {
+      setError("Transaction PIN must be 4 to 16 characters.");
+      return;
+    }
+    setBusySlotAction(`pin:${slotCode}`);
+    setError("");
+    setMessage("");
+    try {
+      await apiRequest(`/owner/inventory/accounts/${slotCode}/pin`, {
+        method: "PUT",
+        body: JSON.stringify({
+          pin: pinVal,
+          reason: `Configured transaction PIN for ${slotCode} via Owner Control Centre`,
+        }),
+      });
+      setPinDraftBySlot((prev) => ({ ...prev, [slotCode]: "" }));
+      setMessage(`Transaction PIN encrypted and saved for ${SLOT_TITLES[slotCode] ?? slotCode}.`);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save transaction PIN.");
+    } finally {
+      setBusySlotAction(null);
+    }
+  }
+
+  async function handleClearAccountPin(slotCode: string) {
+    setBusySlotAction(`clearpin:${slotCode}`);
+    setError("");
+    setMessage("");
+    try {
+      await apiRequest(`/owner/inventory/accounts/${slotCode}/pin`, {
+        method: "DELETE",
+        body: JSON.stringify({
+          reason: `Cleared transaction PIN for ${slotCode} via Owner Control Centre`,
+        }),
+      });
+      setPinDraftBySlot((prev) => ({ ...prev, [slotCode]: "" }));
+      setMessage(`Transaction PIN cleared for ${SLOT_TITLES[slotCode] ?? slotCode}.`);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to clear transaction PIN.");
+    } finally {
+      setBusySlotAction(null);
     }
   }
 
@@ -769,6 +820,15 @@ export default function OwnerInventoryPage() {
                         ? "Eligible & Ready"
                         : "Needs Session / Sync"}
                     </span>
+                    <span
+                      className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${
+                        slot.hasPin
+                          ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
+                          : "bg-amber-50 text-amber-800 ring-amber-600/20"
+                      }`}
+                    >
+                      {slot.hasPin ? "PIN Configured" : "No PIN Set"}
+                    </span>
                   </div>
 
                   {slot.connectionStatus === "SESSION_EXPIRED" && (
@@ -847,20 +907,18 @@ export default function OwnerInventoryPage() {
                   {pipelineBySlot[slot.slotCode] && (
                     <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
                       <span
-                        className={`rounded px-1.5 py-0.5 font-semibold ${
-                          pipelineBySlot[slot.slotCode].locked
-                            ? "bg-amber-100 text-amber-800"
-                            : "bg-slate-100 text-slate-600"
-                        }`}
+                        className={`rounded px-1.5 py-0.5 font-semibold ${pipelineBySlot[slot.slotCode].locked
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-slate-100 text-slate-600"
+                          }`}
                       >
                         {pipelineBySlot[slot.slotCode].locked ? "Lock: HELD" : "Lock: Free"}
                       </span>
                       <span
-                        className={`rounded px-1.5 py-0.5 font-semibold ${
-                          pipelineBySlot[slot.slotCode].cooldownRemainingMs > 0
-                            ? "bg-indigo-100 text-indigo-800"
-                            : "bg-emerald-50 text-emerald-700"
-                        }`}
+                        className={`rounded px-1.5 py-0.5 font-semibold ${pipelineBySlot[slot.slotCode].cooldownRemainingMs > 0
+                          ? "bg-indigo-100 text-indigo-800"
+                          : "bg-emerald-50 text-emerald-700"
+                          }`}
                       >
                         {pipelineBySlot[slot.slotCode].cooldownRemainingMs > 0
                           ? `Cooldown: ${Math.ceil(pipelineBySlot[slot.slotCode].cooldownRemainingMs / 1000)}s`
@@ -904,11 +962,10 @@ export default function OwnerInventoryPage() {
                     type="button"
                     disabled={busySlotAction !== null}
                     onClick={() => handleToggleEligibility(slot)}
-                    className={`w-full rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-40 ${
-                      slot.healthStatus === "DISABLED"
-                        ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
-                        : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
-                    }`}
+                    className={`w-full rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-40 ${slot.healthStatus === "DISABLED"
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                      : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                      }`}
                   >
                     {busySlotAction === `elig:${slot.slotCode}`
                       ? "Updating..."
@@ -916,6 +973,44 @@ export default function OwnerInventoryPage() {
                         ? "Enable Account Eligibility"
                         : "Disable Account Eligibility"}
                   </button>
+                  {slot.sessionConnected && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] font-semibold text-slate-600">
+                        <span>Transaction PIN</span>
+                        <span>{slot.hasPin ? "Encrypted on file" : "Not configured"}</span>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="password"
+                          autoComplete="new-password"
+                          placeholder={slot.hasPin ? "New PIN to rotate" : "Enter PIN (4–16 chars)"}
+                          value={pinDraftBySlot[slot.slotCode] ?? ""}
+                          onChange={(e) =>
+                            setPinDraftBySlot((prev) => ({ ...prev, [slot.slotCode]: e.target.value }))
+                          }
+                          className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-[11px]"
+                        />
+                        <button
+                          type="button"
+                          disabled={busySlotAction !== null || !(pinDraftBySlot[slot.slotCode] ?? "").trim()}
+                          onClick={() => handleSaveAccountPin(slot.slotCode)}
+                          className="rounded bg-[#0B1324] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#162340] disabled:opacity-40 cursor-pointer"
+                        >
+                          {busySlotAction === `pin:${slot.slotCode}` ? "..." : slot.hasPin ? "Update" : "Save"}
+                        </button>
+                        {slot.hasPin && (
+                          <button
+                            type="button"
+                            disabled={busySlotAction !== null}
+                            onClick={() => handleClearAccountPin(slot.slotCode)}
+                            className="rounded border border-rose-200 bg-white px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-40 cursor-pointer"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );

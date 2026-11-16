@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { PRIMARY_SUPPLIER_USERNAME } from "@bigola/shared";
+import {
+  getRestockingScheduleStatus,
+  PRIMARY_SUPPLIER_USERNAME,
+  RESTOCKING_ANNOUNCEMENT,
+} from "@bigola/shared";
 import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatNaira, formatTrillions, roleHomePath } from "@/lib/format";
@@ -43,8 +47,22 @@ export default function HomePage() {
     catalog?.availability?.isFresh ??
     (catalog?.availability?.activeFreshSlotCount ?? 0) > 0;
 
+  const restocking = getRestockingScheduleStatus();
+
   return (
     <div className="min-h-screen bg-[#F4F6FA] text-[#0B1324]">
+      <div
+        className={`border-b px-4 py-2 text-center text-xs font-semibold ${
+          restocking.isRestockingDay
+            ? "border-rose-300 bg-rose-600 text-white"
+            : "border-amber-200 bg-amber-50 text-amber-900"
+        }`}
+      >
+        {RESTOCKING_ANNOUNCEMENT}
+        {restocking.isRestockingDay && restocking.nextSalesDay
+          ? ` (Today is ${restocking.lagosWeekday} in Africa/Lagos — sales resume ${restocking.nextSalesDay}.)`
+          : ""}
+      </div>
       {/* Top Navbar */}
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#0B1324]/95 backdrop-blur-md text-white">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
@@ -167,7 +185,7 @@ export default function HomePage() {
                       Minimum Order
                     </p>
                     <p className="font-display mt-1 text-lg font-bold text-white tabular-nums">
-                      {bulk ? formatTrillions(bulk.minBulkGameAmount) : "10T"}
+                      {bulk ? formatTrillions(bulk.minBulkGameAmount) : "1T"}
                     </p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3.5">
@@ -212,7 +230,7 @@ export default function HomePage() {
               {
                 step: "01",
                 title: "Reserve Stock",
-                desc: "Choose your bulk quantity (minimum 10T, 1T increments) and enter your LagosLife username.",
+                desc: "Choose your bulk quantity (minimum 1T, 1T increments) and enter your LagosLife username.",
               },
               {
                 step: "02",
@@ -259,7 +277,7 @@ export default function HomePage() {
             </h2>
             <p className="mt-1 text-sm text-slate-600">
               {bulk ? formatNaira(bulk.priceKoboPerTrillion) : "₦1,000.00"} per 1T • Minimum order{" "}
-              {bulk ? formatTrillions(bulk.minBulkGameAmount) : "10T"} • 1T increments. Retail packages are pending Owner configuration.
+              {bulk ? formatTrillions(bulk.minBulkGameAmount) : "1T"} • 1T increments. Retail packages are pending Owner configuration.
             </p>
           </div>
           <Link href="/marketplace" className="shrink-0">

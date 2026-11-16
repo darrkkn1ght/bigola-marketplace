@@ -791,6 +791,11 @@ export function registerOwnerRoutes(
       if (!parsed.success) {
         return reply.code(400).send({ error: "Invalid bulk pricing payload.", issues: parsed.error.issues });
       }
+      if (BigInt(parsed.data.minBulkGameAmount) < 1_000_000_000_000n) {
+        return reply
+          .code(400)
+          .send({ error: "Minimum bulk order amount cannot be less than 1T (1,000,000,000,000)." });
+      }
       if (
         parsed.data.maxBulkGameAmount &&
         BigInt(parsed.data.maxBulkGameAmount) < BigInt(parsed.data.minBulkGameAmount)
@@ -2111,6 +2116,72 @@ export function registerOwnerRoutes(
     }
   );
 
+  app.put(
+    "/api/v1/owner/inventory/accounts/:slotCode/pin",
+    { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_INVENTORY_MANAGE)] },
+    async (request, reply) => {
+      const svc = getInvSvc();
+      if (!svc) return reply.code(503).send({ error: "Inventory service unavailable." });
+      const { slotCode } = request.params as { slotCode: string };
+      const parsed = z
+        .object({
+          pin: z.string().min(4).max(16),
+          reason: z.string().min(3).max(500).optional(),
+        })
+        .safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Transaction PIN must be 4 to 16 characters." });
+      }
+      try {
+        const result = await svc.setAccountTransactionPin({
+          actorUserId: request.auth!.userId,
+          slotCode,
+          pin: parsed.data.pin,
+          reason: parsed.data.reason,
+          ipAddress: request.ip,
+        });
+        return reply.code(200).send(result);
+      } catch (err) {
+        if (err instanceof InventoryError) {
+          return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+        }
+        throw err;
+      }
+    }
+  );
+
+  app.delete(
+    "/api/v1/owner/inventory/accounts/:slotCode/pin",
+    { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_INVENTORY_MANAGE)] },
+    async (request, reply) => {
+      const svc = getInvSvc();
+      if (!svc) return reply.code(503).send({ error: "Inventory service unavailable." });
+      const { slotCode } = request.params as { slotCode: string };
+      const parsed = z
+        .object({
+          reason: z.string().min(3).max(500).optional(),
+        })
+        .safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Invalid clear-PIN payload." });
+      }
+      try {
+        const result = await svc.clearAccountTransactionPin({
+          actorUserId: request.auth!.userId,
+          slotCode,
+          reason: parsed.data.reason,
+          ipAddress: request.ip,
+        });
+        return reply.code(200).send(result);
+      } catch (err) {
+        if (err instanceof InventoryError) {
+          return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+        }
+        throw err;
+      }
+    }
+  );
+
   app.post(
     "/api/v1/owner/inventory/accounts/:slotCode/verify-session",
     { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_INVENTORY_MANAGE)] },
@@ -2544,7 +2615,6 @@ export function registerOwnerRoutes(
               {
                 jobId,
                 actorUserId: request.auth!.userId,
-                pinByAccountId: parsed.data.pinByAccountId,
               },
               {
                 jobId: bullId,
@@ -2624,7 +2694,13 @@ export function registerOwnerRoutes(
         return reply.code(503).send({ error: "Disbursement service unavailable." });
       }
       const { jobId } = request.params as { jobId: string };
-      const parsed = pauseOrResumeDisbursementSchema.safeParse(request.body ?? {});
+      const parsed = z
+        .object({
+          reason: z.string().min(3).max(500).optional(),
+          twoFactorCode: z.string().min(4).max(16).optional(),
+          slotCode: z.string().min(2).max(40).optional(),
+        })
+        .safeParse(request.body ?? {});
       if (!parsed.success) {
         return reply.code(400).send({ error: "Invalid resume payload." });
       }
@@ -2634,6 +2710,8 @@ export function registerOwnerRoutes(
           actorUserId: request.auth!.userId,
           actorRole: request.auth!.role,
           reason: parsed.data.reason,
+          twoFactorCode: parsed.data.twoFactorCode,
+          slotCode: parsed.data.slotCode,
           ipAddress: request.ip,
         });
         return reply.code(200).send({ job });

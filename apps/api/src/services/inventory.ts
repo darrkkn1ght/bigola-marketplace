@@ -175,6 +175,8 @@ export class InventoryService {
         lastSyncedAt: acc.lastSyncedAt?.toISOString() ?? null,
         sessionConnected: sessionMeta.connected && acc.healthStatus !== GameAccountHealth.SESSION_EXPIRED,
         connectionStatus,
+        hasPin: sessionMeta.hasPin,
+        pinUpdatedAt: sessionMeta.pinUpdatedAt,
         sessionIdentity: sessionMeta.connected
           ? {
               uid: sessionMeta.uid,
@@ -698,6 +700,10 @@ export class InventoryService {
       );
     }
 
+    const existingBundle = decodeEncryptedSessionBundle(
+      slot.encryptedSessionBundle,
+      this.encryptionKeyHex
+    );
     const nowIso = new Date().toISOString();
     const bundle: StoredSessionBundle = {
       cookie: input.cookie,
@@ -706,6 +712,8 @@ export class InventoryService {
       simName: input.simName,
       connectedAt: nowIso,
       verifiedAt: nowIso,
+      transactionPin: existingBundle?.transactionPin ?? null,
+      pinUpdatedAt: existingBundle?.pinUpdatedAt ?? null,
     };
     const encryptedSessionBundle = encodeEncryptedSessionBundle(bundle, this.encryptionKeyHex);
 
@@ -1064,6 +1072,126 @@ export class InventoryService {
       }
       throw err;
     }
+  }
+
+  async setAccountTransactionPin(input: {
+    actorUserId: string;
+    slotCode: string;
+    pin: string;
+    reason?: string;
+    ipAddress?: string;
+  }) {
+    const cleanPin = input.pin.trim();
+    if (cleanPin.length < 4 || cleanPin.length > 16) {
+      throw new InventoryError(400, "INVALID_PIN", "Transaction PIN must be 4 to 16 characters.");
+    }
+    const slot = await this.prisma.gameAccount.findUnique({
+      where: { slotCode: input.slotCode },
+    });
+    if (!slot) {
+      throw new InventoryError(404, "GAME_ACCOUNT_NOT_FOUND", `Slot ${input.slotCode} not found.`);
+    }
+    const decoded = decodeEncryptedSessionBundle(
+      slot.encryptedSessionBundle,
+      this.encryptionKeyHex
+    );
+    if (!decoded || !decoded.cookie) {
+      throw new InventoryError(
+        409,
+        "SESSION_NOT_CONNECTED",
+        `Connect a LagosLife session for ${slot.slotCode} before configuring its transaction PIN.`
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    const updatedBundle: StoredSessionBundle = {
+      ...decoded,
+      transactionPin: cleanPin,
+      pinUpdatedAt: nowIso,
+    };
+    const encryptedSessionBundle = encodeEncryptedSessionBundle(
+      updatedBundle,
+      this.encryptionKeyHex
+    );
+
+    await this.prisma.gameAccount.update({
+      where: { id: slot.id },
+      data: { encryptedSessionBundle },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorUserId: input.actorUserId,
+        actionType: "LAGOSLIFE_ACCOUNT_PIN_UPDATED",
+        targetEntity: "game_accounts",
+        targetId: slot.id,
+        beforeState: { slotCode: slot.slotCode, hasPin: Boolean(decoded.transactionPin) },
+        afterState: { slotCode: slot.slotCode, hasPin: true, pinUpdatedAt: nowIso },
+        reason: input.reason?.trim() || `Configured transaction PIN for ${slot.slotCode}`,
+        ipAddress: input.ipAddress,
+      },
+    });
+
+    return {
+      slotCode: slot.slotCode,
+      hasPin: true,
+      pinUpdatedAt: nowIso,
+    };
+  }
+
+  async clearAccountTransactionPin(input: {
+    actorUserId: string;
+    slotCode: string;
+    reason?: string;
+    ipAddress?: string;
+  }) {
+    const slot = await this.prisma.gameAccount.findUnique({
+      where: { slotCode: input.slotCode },
+    });
+    if (!slot) {
+      throw new InventoryError(404, "GAME_ACCOUNT_NOT_FOUND", `Slot ${input.slotCode} not found.`);
+    }
+    const decoded = decodeEncryptedSessionBundle(
+      slot.encryptedSessionBundle,
+      this.encryptionKeyHex
+    );
+    if (!decoded) {
+      return { slotCode: slot.slotCode, hasPin: false, pinUpdatedAt: null };
+    }
+
+    const updatedBundle: StoredSessionBundle = {
+      ...decoded,
+      transactionPin: null,
+      pinUpdatedAt: null,
+    };
+    const encryptedSessionBundle = encodeEncryptedSessionBundle(
+      updatedBundle,
+      this.encryptionKeyHex
+    );
+
+    await this.prisma.gameAccount.update({
+      where: { id: slot.id },
+      data: { encryptedSessionBundle },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorUserId: input.actorUserId,
+        actionType: "LAGOSLIFE_ACCOUNT_PIN_CLEARED",
+        targetEntity: "game_accounts",
+        targetId: slot.id,
+        beforeState: { slotCode: slot.slotCode, hasPin: Boolean(decoded.transactionPin) },
+        afterState: { slotCode: slot.slotCode, hasPin: false },
+        reason: input.reason?.trim() || `Cleared transaction PIN for ${slot.slotCode}`,
+        ipAddress: input.ipAddress,
+      },
+    });
+
+    return {
+      slotCode: slot.slotCode,
+      hasPin: false,
+      pinUpdatedAt: null,
+    };
   }
 
   async syncLiveSlotBalance(input: {

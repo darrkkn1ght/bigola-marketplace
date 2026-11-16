@@ -62,7 +62,7 @@ const ONE_BILLION = 1_000_000_000n;
 export default function OwnerPricingPage() {
   const [pricing, setPricing] = useState<PricingOverview | null>(null);
   const [priceNairaPerT, setPriceNairaPerT] = useState("1000");
-  const [minTrillions, setMinTrillions] = useState("10");
+  const [minTrillions, setMinTrillions] = useState("1");
   const [maxTrillions, setMaxTrillions] = useState("");
   const [incrementTrillions, setIncrementTrillions] = useState("1");
   const [promoDiscountPercent, setPromoDiscountPercent] = useState("0");
@@ -76,7 +76,7 @@ export default function OwnerPricingPage() {
   const [retailReason, setRetailReason] = useState("");
   const [savingRetail, setSavingRetail] = useState(false);
 
-  const [previewTrillions, setPreviewTrillions] = useState("25");
+  const [previewTrillions, setPreviewTrillions] = useState("1");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

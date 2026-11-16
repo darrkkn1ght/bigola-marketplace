@@ -4,9 +4,57 @@ export const INITIAL_RESERVE_ACCOUNT_COUNT = 4;
 export const TARGET_RESERVE_PER_ACCOUNT = 70_000_000_000_000n; // 70 Trillion
 export const INITIAL_ACTIVE_RESERVE_TARGET = 280_000_000_000_000n; // 280 Trillion
 
-export const DEFAULT_BULK_PRICE_KOBO_PER_TRILLION = 100_000n; // ₦1,000.00 in kobo
-export const DEFAULT_BULK_MIN_GAME_AMOUNT = 10_000_000_000_000n; // 10 Trillion
 export const ONE_TRILLION = 1_000_000_000_000n;
+export const DEFAULT_BULK_PRICE_KOBO_PER_TRILLION = 100_000n; // ₦1,000.00 in kobo
+export const DEFAULT_BULK_MIN_GAME_AMOUNT = ONE_TRILLION; // 1 Trillion
+
+export const RESTOCKING_ANNOUNCEMENT =
+  "RESTOCKING DAYS: We do not process new sales on Wednesdays and Saturdays. Normal sales resume on the next available sales day." as const;
+
+export interface RestockingScheduleStatus {
+  timezone: "Africa/Lagos";
+  lagosWeekday: string;
+  isRestockingDay: boolean;
+  nextSalesDay: string | null;
+  announcement: string;
+}
+
+export function getRestockingScheduleStatus(now: Date = new Date()): RestockingScheduleStatus {
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Africa/Lagos",
+    weekday: "short",
+  }).format(now);
+
+  if (weekday === "Wed") {
+    return {
+      timezone: "Africa/Lagos",
+      lagosWeekday: "Wednesday",
+      isRestockingDay: true,
+      nextSalesDay: "Thursday",
+      announcement: RESTOCKING_ANNOUNCEMENT,
+    };
+  }
+  if (weekday === "Sat") {
+    return {
+      timezone: "Africa/Lagos",
+      lagosWeekday: "Saturday",
+      isRestockingDay: true,
+      nextSalesDay: "Sunday",
+      announcement: RESTOCKING_ANNOUNCEMENT,
+    };
+  }
+  const fullDay = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Africa/Lagos",
+    weekday: "long",
+  }).format(now);
+  return {
+    timezone: "Africa/Lagos",
+    lagosWeekday: fullDay,
+    isRestockingDay: false,
+    nextSalesDay: null,
+    announcement: RESTOCKING_ANNOUNCEMENT,
+  };
+}
 
 export const DEFAULT_ORDER_EXPIRY_MINUTES = 30;
 export const DEFAULT_INVENTORY_MAX_AGE_MINUTES = 60;

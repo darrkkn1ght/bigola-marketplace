@@ -332,6 +332,7 @@ export default function OwnerOrdersPage() {
 
   // Ambiguous Chunk Resolution State
   const [ambiguousNotesByChunk, setAmbiguousNotesByChunk] = useState<Record<string, string>>({});
+  const [twoFactorByJob, setTwoFactorByJob] = useState<Record<string, string>>({});
 
   // Manual Fulfilment fallback state
   const [manualAccountId, setManualAccountId] = useState("");
@@ -748,14 +749,21 @@ export default function OwnerOrdersPage() {
     setError(null);
     setActionBanner(null);
     try {
+      const twoFactorVal = action === "resume" ? (twoFactorByJob[jobId] ?? "").trim() : "";
       const body =
         action === "execute"
           ? { maxChunksToProcess: 5, waitForCooldown: false }
-          : { reason: reason || `Owner ${action} command.` };
+          : {
+              reason: reason || `Owner ${action} command.`,
+              ...(twoFactorVal ? { twoFactorCode: twoFactorVal } : {}),
+            };
       await apiRequest(`/owner/disbursements/${jobId}/${action}`, {
         method: "POST",
         body: JSON.stringify(body),
       });
+      if (twoFactorVal) {
+        setTwoFactorByJob((prev) => ({ ...prev, [jobId]: "" }));
+      }
       setConfirmExecuteJobId(null);
       setConfirmCancelJobId(null);
       setCancelJobReason("");
@@ -1772,12 +1780,34 @@ export default function OwnerOrdersPage() {
                                 </>
                               )}
                               {job.status === "PAUSED" && (
-                                <Button
-                                  onClick={() => handleJobAction(job.id, "resume")}
-                                  disabled={disbBusy || job.hasAmbiguousChunks}
-                                >
-                                  Resume Job
-                                </Button>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {job.chunks.some(
+                                    (c) =>
+                                      c.status === "FAILED_RETRYABLE" &&
+                                      typeof c.errorMessage === "string" &&
+                                      c.errorMessage.startsWith("TWO_FACTOR_REQUIRED:")
+                                  ) && (
+                                    <input
+                                      type="password"
+                                      autoComplete="one-time-code"
+                                      placeholder="One-time 2FA code"
+                                      value={twoFactorByJob[job.id] ?? ""}
+                                      onChange={(e) =>
+                                        setTwoFactorByJob((prev) => ({
+                                          ...prev,
+                                          [job.id]: e.target.value,
+                                        }))
+                                      }
+                                      className="rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-xs"
+                                    />
+                                  )}
+                                  <Button
+                                    onClick={() => handleJobAction(job.id, "resume")}
+                                    disabled={disbBusy || job.hasAmbiguousChunks}
+                                  >
+                                    Resume Job
+                                  </Button>
+                                </div>
                               )}
                               {job.status !== "COMPLETED" && job.status !== "FAILED" && (
                                 <Button

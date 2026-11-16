@@ -18,6 +18,7 @@ import {
   DEFAULT_MAX_ACTIVE_UNPAID_ORDERS_PER_CUSTOMER,
   DEFAULT_MAX_RESERVED_GAME_AMOUNT_PER_CUSTOMER,
   DEFAULT_ORDER_EXPIRY_MINUTES,
+  getRestockingScheduleStatus,
   isInventoryStale,
   normalizeLagoslifeUsername,
   ONE_TRILLION,
@@ -211,10 +212,11 @@ export class OrderService {
       bulkVal.priceKoboPerTrillion,
       DEFAULT_BULK_PRICE_KOBO_PER_TRILLION
     );
-    const minBulkGameAmount = parseBigIntString(
+    const parsedMinBulk = parseBigIntString(
       bulkVal.minBulkGameAmount,
       DEFAULT_BULK_MIN_GAME_AMOUNT
     );
+    const minBulkGameAmount = parsedMinBulk < ONE_TRILLION ? ONE_TRILLION : parsedMinBulk;
     const maxBulkGameAmount =
       typeof bulkVal.maxBulkGameAmount === "string" && /^\d+$/.test(bulkVal.maxBulkGameAmount)
         ? BigInt(bulkVal.maxBulkGameAmount)
@@ -359,6 +361,7 @@ export class OrderService {
 
     return {
       businessSettings: policies.businessSettings,
+      restockingSchedule: getRestockingScheduleStatus(now),
       bulk: bulkPayload,
       bulkPricing: bulkPayload,
       retail: policies.retailPricing,
@@ -580,6 +583,17 @@ export class OrderService {
 
         // 4. Load active policies
         const policies = await this.getPolicies(tx);
+
+        if (input.channel === OrderChannel.ONLINE) {
+          const restocking = getRestockingScheduleStatus(now);
+          if (restocking.isRestockingDay) {
+            throw new OrderError(
+              409,
+              "RESTOCKING_DAY_CLOSED",
+              `${restocking.announcement} (Today is ${restocking.lagosWeekday} in Africa/Lagos; sales resume ${restocking.nextSalesDay}.)`
+            );
+          }
+        }
 
         if (!policies.businessSettings.marketplaceSalesEnabled) {
           throw new OrderError(
