@@ -12,7 +12,7 @@ import {
   PrismaClient,
 } from "@prisma/client";
 import {
-  calculateBulkOrderFiatKobo,
+  calculateBulkOrderQuote,
   DEFAULT_BULK_MIN_GAME_AMOUNT,
   DEFAULT_BULK_PRICE_KOBO_PER_TRILLION,
   DEFAULT_MAX_ACTIVE_UNPAID_ORDERS_PER_CUSTOMER,
@@ -20,6 +20,8 @@ import {
   DEFAULT_ORDER_EXPIRY_MINUTES,
   isInventoryStale,
   normalizeLagoslifeUsername,
+  ONE_TRILLION,
+  type BulkTierConfig,
   type RetailPackageConfig,
 } from "@bigola/shared";
 import { getInventoryMaxAgeMinutes } from "./inventory.js";
@@ -166,6 +168,7 @@ export class OrderService {
       where: {
         key: {
           in: [
+            "business_settings",
             "bulk_pricing",
             "regular_pricing",
             "order_expiry_policy",
@@ -176,6 +179,22 @@ export class OrderService {
       },
     });
     const byKey = new Map(settings.map((s) => [s.key, s.value]));
+    const businessVal = (byKey.get("business_settings") ?? {}) as Record<string, unknown>;
+    const businessSettings = {
+      marketplaceSalesEnabled: businessVal.marketplaceSalesEnabled !== false,
+      retailOrdersEnabled: businessVal.retailOrdersEnabled !== false,
+      bulkOrdersEnabled: businessVal.bulkOrdersEnabled !== false,
+      maintenanceMessage:
+        typeof businessVal.maintenanceMessage === "string" && businessVal.maintenanceMessage.trim()
+          ? businessVal.maintenanceMessage.trim()
+          : null,
+      customerAvailabilityNote:
+        typeof businessVal.customerAvailabilityNote === "string" &&
+        businessVal.customerAvailabilityNote.trim()
+          ? businessVal.customerAvailabilityNote.trim()
+          : null,
+    };
+
     const bulkSetting = byKey.has("bulk_pricing") ? { value: byKey.get("bulk_pricing") } : null;
     const retailSetting = byKey.has("regular_pricing") ? { value: byKey.get("regular_pricing") } : null;
     const expirySetting = byKey.has("order_expiry_policy") ? { value: byKey.get("order_expiry_policy") } : null;
@@ -196,7 +215,41 @@ export class OrderService {
       bulkVal.minBulkGameAmount,
       DEFAULT_BULK_MIN_GAME_AMOUNT
     );
-    const bulkEnabled = bulkVal.enabled !== false;
+    const maxBulkGameAmount =
+      typeof bulkVal.maxBulkGameAmount === "string" && /^\d+$/.test(bulkVal.maxBulkGameAmount)
+        ? BigInt(bulkVal.maxBulkGameAmount)
+        : null;
+    const bulkIncrementGameAmount =
+      typeof bulkVal.bulkIncrementGameAmount === "string" &&
+      /^\d+$/.test(bulkVal.bulkIncrementGameAmount) &&
+      BigInt(bulkVal.bulkIncrementGameAmount) > 0n
+        ? BigInt(bulkVal.bulkIncrementGameAmount)
+        : ONE_TRILLION;
+    const promoDiscountBpsRaw = Number(bulkVal.promoDiscountBps ?? 0);
+    const promoDiscountBps =
+      Number.isInteger(promoDiscountBpsRaw) && promoDiscountBpsRaw > 0 && promoDiscountBpsRaw <= 9000
+        ? promoDiscountBpsRaw
+        : 0;
+    const promoLabel =
+      typeof bulkVal.promoLabel === "string" && bulkVal.promoLabel.trim()
+        ? bulkVal.promoLabel.trim()
+        : null;
+    const rawTiers = Array.isArray(bulkVal.tiers) ? (bulkVal.tiers as BulkTierConfig[]) : [];
+    const tiers = rawTiers
+      .filter(
+        (t) =>
+          t &&
+          typeof t.minGameAmount === "string" &&
+          /^\d+$/.test(t.minGameAmount) &&
+          typeof t.priceKoboPerTrillion === "string" &&
+          /^\d+$/.test(t.priceKoboPerTrillion)
+      )
+      .map((t) => ({
+        minGameAmount: t.minGameAmount,
+        priceKoboPerTrillion: t.priceKoboPerTrillion,
+        label: typeof t.label === "string" ? t.label : undefined,
+      }));
+    const bulkEnabled = bulkVal.enabled !== false && businessSettings.bulkOrdersEnabled;
 
     const retailVal = (retailSetting?.value ?? {}) as {
       status?: string;
@@ -232,9 +285,15 @@ export class OrderService {
     );
 
     return {
+      businessSettings,
       bulkPricing: {
         priceKoboPerTrillion: bulkPriceKoboPerTrillion,
         minBulkGameAmount,
+        maxBulkGameAmount,
+        bulkIncrementGameAmount,
+        promoDiscountBps,
+        promoLabel,
+        tiers,
         enabled: bulkEnabled,
       },
       retailPricing: {
@@ -288,10 +347,18 @@ export class OrderService {
     const bulkPayload = {
       priceKoboPerTrillion: policies.bulkPricing.priceKoboPerTrillion.toString(),
       minBulkGameAmount: policies.bulkPricing.minBulkGameAmount.toString(),
+      maxBulkGameAmount: policies.bulkPricing.maxBulkGameAmount
+        ? policies.bulkPricing.maxBulkGameAmount.toString()
+        : null,
+      bulkIncrementGameAmount: policies.bulkPricing.bulkIncrementGameAmount.toString(),
+      promoDiscountBps: policies.bulkPricing.promoDiscountBps,
+      promoLabel: policies.bulkPricing.promoLabel,
+      tiers: policies.bulkPricing.tiers,
       enabled: policies.bulkPricing.enabled,
     };
 
     return {
+      businessSettings: policies.businessSettings,
       bulk: bulkPayload,
       bulkPricing: bulkPayload,
       retail: policies.retailPricing,
@@ -514,12 +581,24 @@ export class OrderService {
         // 4. Load active policies
         const policies = await this.getPolicies(tx);
 
+        if (!policies.businessSettings.marketplaceSalesEnabled) {
+          throw new OrderError(
+            409,
+            "MARKETPLACE_PAUSED",
+            policies.businessSettings.maintenanceMessage ??
+              "Marketplace sales are currently paused by the Owner."
+          );
+        }
+
         // 5. Compute authoritative server-side pricing & snapshot
         let requestedGameAmount: bigint;
         let fiatAmountKobo: bigint;
         let pricingSnapshot: Prisma.InputJsonValue;
 
         if (input.orderType === OrderType.RETAIL) {
+          if (!policies.businessSettings.retailOrdersEnabled) {
+            throw new OrderError(409, "RETAIL_DISABLED", "Retail ordering is currently paused.");
+          }
           if (policies.retailPricing.status !== "CONFIGURED") {
             throw new OrderError(
               409,
@@ -538,7 +617,11 @@ export class OrderService {
             );
           }
           requestedGameAmount = BigInt(pkg.gameAmount);
-          fiatAmountKobo = BigInt(pkg.fiatKobo);
+          const effectiveFiatKobo =
+            pkg.promoFiatKobo && /^\d+$/.test(pkg.promoFiatKobo)
+              ? BigInt(pkg.promoFiatKobo)
+              : BigInt(pkg.fiatKobo);
+          fiatAmountKobo = effectiveFiatKobo;
           pricingSnapshot = {
             version: 1,
             orderType: OrderType.RETAIL,
@@ -546,6 +629,9 @@ export class OrderService {
             packageName: pkg.name,
             gameAmount: requestedGameAmount.toString(),
             fiatKobo: fiatAmountKobo.toString(),
+            standardFiatKobo: pkg.fiatKobo,
+            promoFiatKobo: pkg.promoFiatKobo ?? null,
+            promoLabel: pkg.promoLabel ?? null,
             capturedAt: now.toISOString(),
           };
         } else {
@@ -556,12 +642,20 @@ export class OrderService {
             throw new OrderError(400, "INVALID_AMOUNT", "Bulk order amount is required.");
           }
           requestedGameAmount = input.gameAmount;
+          let quote;
           try {
-            fiatAmountKobo = calculateBulkOrderFiatKobo(
-              requestedGameAmount,
-              policies.bulkPricing.priceKoboPerTrillion,
-              policies.bulkPricing.minBulkGameAmount
-            );
+            quote = calculateBulkOrderQuote(requestedGameAmount, {
+              priceKoboPerTrillion: policies.bulkPricing.priceKoboPerTrillion,
+              minBulkGameAmount: policies.bulkPricing.minBulkGameAmount,
+              maxBulkGameAmount: policies.bulkPricing.maxBulkGameAmount,
+              bulkIncrementGameAmount: policies.bulkPricing.bulkIncrementGameAmount,
+              tiers: policies.bulkPricing.tiers.map((t) => ({
+                minGameAmount: BigInt(t.minGameAmount),
+                priceKoboPerTrillion: BigInt(t.priceKoboPerTrillion),
+                label: t.label,
+              })),
+              promoDiscountBps: policies.bulkPricing.promoDiscountBps,
+            });
           } catch (err) {
             throw new OrderError(
               400,
@@ -569,11 +663,20 @@ export class OrderService {
               err instanceof Error ? err.message : "Invalid bulk order amount."
             );
           }
+          fiatAmountKobo = quote.netFiatKobo;
           pricingSnapshot = {
             version: 1,
             orderType: OrderType.BULK,
-            priceKoboPerTrillion: policies.bulkPricing.priceKoboPerTrillion.toString(),
+            priceKoboPerTrillion: quote.unitPriceKoboPerTrillion.toString(),
+            basePriceKoboPerTrillion: policies.bulkPricing.priceKoboPerTrillion.toString(),
             minBulkGameAmount: policies.bulkPricing.minBulkGameAmount.toString(),
+            maxBulkGameAmount: policies.bulkPricing.maxBulkGameAmount?.toString() ?? null,
+            bulkIncrementGameAmount: policies.bulkPricing.bulkIncrementGameAmount.toString(),
+            appliedTierLabel: quote.appliedTierLabel,
+            promoDiscountBps: policies.bulkPricing.promoDiscountBps,
+            promoLabel: policies.bulkPricing.promoLabel,
+            grossFiatKobo: quote.grossFiatKobo.toString(),
+            discountKobo: quote.discountKobo.toString(),
             gameAmount: requestedGameAmount.toString(),
             fiatKobo: fiatAmountKobo.toString(),
             capturedAt: now.toISOString(),

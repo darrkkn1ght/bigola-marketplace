@@ -628,69 +628,71 @@ export class DisbursementService {
       }
     }
 
-    const createdJob = await this.prisma.$transaction(async (tx) => {
-      const job = await tx.disbursementJob.create({
-        data: {
-          orderId: order.id,
-          totalAmount: totalJobAmount.toString(),
-          deliveredAmount: "0",
-          status: DisbursementJobStatus.PENDING,
-          totalChunks: chunkDrafts.length,
-          completedChunks: 0,
-        },
-      });
-
-      const createdChunks = [];
-      for (let idx = 0; idx < chunkDrafts.length; idx++) {
-        const draft = chunkDrafts[idx]!;
-        const idempotencyKey = `disb_${job.id}_c${idx + 1}_${draft.slotCode.toLowerCase()}`;
-        const chunk = await tx.disbursementChunk.create({
+    const createdJob = await this.prisma.$transaction(
+      async (tx) => {
+        const job = await tx.disbursementJob.create({
           data: {
+            orderId: order.id,
+            totalAmount: totalJobAmount.toString(),
+            deliveredAmount: "0",
+            status: DisbursementJobStatus.PENDING,
+            totalChunks: chunkDrafts.length,
+            completedChunks: 0,
+          },
+        });
+
+        await tx.disbursementChunk.createMany({
+          data: chunkDrafts.map((draft, idx) => ({
             jobId: job.id,
             sourceAccountId: draft.sourceAccountId,
             recipientUsername: encodedRecipient,
             amount: draft.amount.toString(),
-            idempotencyKey,
+            idempotencyKey: `disb_${job.id}_c${idx + 1}_${draft.slotCode.toLowerCase()}`,
             status: DisbursementChunkStatus.PENDING,
             attemptCount: 0,
+          })),
+        });
+
+        const createdChunks = await tx.disbursementChunk.findMany({
+          where: { jobId: job.id },
+          orderBy: { createdAt: "asc" },
+        });
+
+        if (order.status === OrderStatus.READY_FOR_FULFILMENT) {
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: OrderStatus.QUEUED },
+          });
+        }
+
+        await tx.auditLog.create({
+          data: {
+            actorUserId: input.actorUserId,
+            actionType: "DISBURSEMENT_JOB_AUTHORIZED",
+            targetEntity: "disbursement_jobs",
+            targetId: job.id,
+            afterState: {
+              orderId: order.id,
+              orderNumber: order.orderNumber,
+              recipientUsername: recipientClean,
+              resolvedTargetId: resolvedPlayer.id,
+              totalAmount: totalJobAmount.toString(),
+              totalChunks: chunkDrafts.length,
+              allocations: normalizedAllocations.map((a) => ({
+                gameAccountId: a.account.id,
+                slotCode: a.account.slotCode,
+                amount: a.amount.toString(),
+              })),
+            },
+            reason: input.authorizationNote ?? "Owner authorized LagosLife disbursement job.",
+            ipAddress: input.ipAddress,
           },
         });
-        createdChunks.push(chunk);
-      }
 
-      if (order.status === OrderStatus.READY_FOR_FULFILMENT) {
-        await tx.order.update({
-          where: { id: order.id },
-          data: { status: OrderStatus.QUEUED },
-        });
-      }
-
-      await tx.auditLog.create({
-        data: {
-          actorUserId: input.actorUserId,
-          actionType: "DISBURSEMENT_JOB_AUTHORIZED",
-          targetEntity: "disbursement_jobs",
-          targetId: job.id,
-          afterState: {
-            orderId: order.id,
-            orderNumber: order.orderNumber,
-            recipientUsername: recipientClean,
-            resolvedTargetId: resolvedPlayer.id,
-            totalAmount: totalJobAmount.toString(),
-            totalChunks: chunkDrafts.length,
-            allocations: normalizedAllocations.map((a) => ({
-              gameAccountId: a.account.id,
-              slotCode: a.account.slotCode,
-              amount: a.amount.toString(),
-            })),
-          },
-          reason: input.authorizationNote ?? "Owner authorized LagosLife disbursement job.",
-          ipAddress: input.ipAddress,
-        },
-      });
-
-      return { job, chunks: createdChunks };
-    });
+        return { job, chunks: createdChunks };
+      },
+      { maxWait: 10_000, timeout: 25_000 }
+    );
 
     return this.serializeJob(createdJob.job, createdJob.chunks, allAccounts);
   }

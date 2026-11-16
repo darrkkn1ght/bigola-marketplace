@@ -109,6 +109,9 @@ export default function OwnerInventoryPage() {
   } | null>(null);
   const [discrepancies, setDiscrepancies] = useState<DiscrepancyRecord[]>([]);
   const [ledger, setLedger] = useState<LedgerRecord[]>([]);
+  const [pipelineBySlot, setPipelineBySlot] = useState<
+    Record<string, { locked: boolean; cooldownRemainingMs: number; activeChunkCount: number }>
+  >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -151,7 +154,7 @@ export default function OwnerInventoryPage() {
     setLoading(true);
     setError("");
     try {
-      const [invData, discData] = await Promise.all([
+      const [invData, discData, pipeData] = await Promise.all([
         apiRequest<{
           openDiscrepanciesCount: number;
           totals: {
@@ -163,7 +166,28 @@ export default function OwnerInventoryPage() {
           recentLedger: LedgerRecord[];
         }>("/owner/inventory"),
         apiRequest<{ discrepancies: DiscrepancyRecord[] }>("/owner/inventory/discrepancies"),
+        apiRequest<{
+          accounts: Array<{
+            slotCode: string;
+            locked: boolean;
+            cooldownRemainingMs: number;
+            activeChunkCount: number;
+          }>;
+        }>("/owner/operations/pipelines").catch(() => ({ accounts: [] })),
       ]);
+
+      const nextPipeMap: Record<
+        string,
+        { locked: boolean; cooldownRemainingMs: number; activeChunkCount: number }
+      > = {};
+      for (const acc of pipeData.accounts ?? []) {
+        nextPipeMap[acc.slotCode] = {
+          locked: acc.locked,
+          cooldownRemainingMs: acc.cooldownRemainingMs,
+          activeChunkCount: acc.activeChunkCount,
+        };
+      }
+      setPipelineBySlot(nextPipeMap);
 
       const sortedSlots = [...(invData.slots || [])].sort(
         (a, b) => SLOT_ORDER.indexOf(a.slotCode) - SLOT_ORDER.indexOf(b.slotCode)
@@ -349,6 +373,33 @@ export default function OwnerInventoryPage() {
       setError(err instanceof Error ? err.message : "Session cookie import failed.");
     } finally {
       setConnectSubmitting(false);
+    }
+  }
+
+  async function handleToggleEligibility(slot: InventorySlot) {
+    const nextHealth = slot.healthStatus === "DISABLED" ? "ACTIVE" : "DISABLED";
+    setBusySlotAction(`elig:${slot.slotCode}`);
+    setError("");
+    setMessage("");
+    try {
+      await apiRequest(`/owner/inventory/accounts/${slot.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          healthStatus: nextHealth,
+          reason:
+            nextHealth === "DISABLED"
+              ? "Disabled eligibility via Owner Control Centre"
+              : "Re-enabled eligibility via Owner Control Centre",
+        }),
+      });
+      setMessage(
+        `${SLOT_TITLES[slot.slotCode] ?? slot.slotCode} marked ${nextHealth}.`
+      );
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update account eligibility.");
+    } finally {
+      setBusySlotAction(null);
     }
   }
 
@@ -670,9 +721,8 @@ export default function OwnerInventoryPage() {
                   <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 pb-3">
                     <div className="min-w-0 flex-1">
                       <span
-                        className={`block text-[11px] font-bold uppercase tracking-wider break-words ${
-                          isMain ? "text-[#059669]" : "text-indigo-600"
-                        }`}
+                        className={`block text-[11px] font-bold uppercase tracking-wider break-words ${isMain ? "text-[#059669]" : "text-indigo-600"
+                          }`}
                       >
                         {slotTitle}
                       </span>
@@ -794,6 +844,30 @@ export default function OwnerInventoryPage() {
                       ? `Last synced ${formatDateTime(slot.lastSyncedAt)}`
                       : "Never synchronized"}
                   </p>
+                  {pipelineBySlot[slot.slotCode] && (
+                    <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+                      <span
+                        className={`rounded px-1.5 py-0.5 font-semibold ${
+                          pipelineBySlot[slot.slotCode].locked
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {pipelineBySlot[slot.slotCode].locked ? "Lock: HELD" : "Lock: Free"}
+                      </span>
+                      <span
+                        className={`rounded px-1.5 py-0.5 font-semibold ${
+                          pipelineBySlot[slot.slotCode].cooldownRemainingMs > 0
+                            ? "bg-indigo-100 text-indigo-800"
+                            : "bg-emerald-50 text-emerald-700"
+                        }`}
+                      >
+                        {pipelineBySlot[slot.slotCode].cooldownRemainingMs > 0
+                          ? `Cooldown: ${Math.ceil(pipelineBySlot[slot.slotCode].cooldownRemainingMs / 1000)}s`
+                          : "Cooldown: Ready"}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-4 space-y-2 border-t border-slate-100 pt-3.5">
@@ -826,6 +900,22 @@ export default function OwnerInventoryPage() {
                         : "Verify Session"}
                     </button>
                   </div>
+                  <button
+                    type="button"
+                    disabled={busySlotAction !== null}
+                    onClick={() => handleToggleEligibility(slot)}
+                    className={`w-full rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-40 ${
+                      slot.healthStatus === "DISABLED"
+                        ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                        : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                    }`}
+                  >
+                    {busySlotAction === `elig:${slot.slotCode}`
+                      ? "Updating..."
+                      : slot.healthStatus === "DISABLED"
+                        ? "Enable Account Eligibility"
+                        : "Disable Account Eligibility"}
+                  </button>
                 </div>
               </div>
             );

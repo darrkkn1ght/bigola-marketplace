@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ONE_TRILLION } from "@bigola/shared";
+import { calculateBulkOrderQuote, ONE_TRILLION } from "@bigola/shared";
 import { apiRequest } from "@/lib/api";
 import { captureReferralFromUrl } from "@/lib/referral";
 import { formatNaira, formatTrillions } from "@/lib/format";
@@ -15,15 +15,35 @@ import { SkeletonCard } from "@/components/ui/Skeleton";
 interface BulkPricingInfo {
   priceKoboPerTrillion: string;
   minBulkGameAmount: string;
+  maxBulkGameAmount?: string | null;
+  bulkIncrementGameAmount?: string;
+  promoDiscountBps?: number;
+  promoLabel?: string | null;
+  tiers?: Array<{ minGameAmount: string; priceKoboPerTrillion: string; label?: string }>;
   enabled: boolean;
 }
 
 interface RetailPricingInfo {
   status: string;
-  packages: Array<{ id: string; name: string; gameAmount: string; fiatKobo: string; enabled: boolean }>;
+  packages: Array<{
+    id: string;
+    name: string;
+    gameAmount: string;
+    fiatKobo: string;
+    enabled: boolean;
+    promoFiatKobo?: string | null;
+    promoLabel?: string | null;
+  }>;
 }
 
 interface CatalogResponse {
+  businessSettings?: {
+    marketplaceSalesEnabled: boolean;
+    retailOrdersEnabled: boolean;
+    bulkOrdersEnabled: boolean;
+    maintenanceMessage: string | null;
+    customerAvailabilityNote: string | null;
+  };
   bulk?: BulkPricingInfo;
   bulkPricing?: BulkPricingInfo;
   retail?: RetailPricingInfo;
@@ -86,10 +106,34 @@ export default function MarketplacePage() {
     ? Number(BigInt(bulk.minBulkGameAmount) / ONE_TRILLION)
     : 10;
   const pricePerT = bulk ? BigInt(bulk.priceKoboPerTrillion) : 100_000n;
-  const bulkEnabled = bulk?.enabled !== false;
+  const salesEnabled = catalog?.businessSettings?.marketplaceSalesEnabled !== false;
+  const bulkEnabled = salesEnabled && bulk?.enabled !== false;
   const hasAvailableStock = isFresh && BigInt(reservableAvailable) > 0n;
-  const validQuantity = Number.isInteger(trillions) && trillions >= minTrillions;
-  const totalKobo = validQuantity ? BigInt(trillions) * pricePerT : 0n;
+  let totalKobo = 0n;
+  let validQuantity = false;
+  if (Number.isInteger(trillions) && trillions >= minTrillions) {
+    try {
+      const q = calculateBulkOrderQuote(BigInt(trillions) * ONE_TRILLION, {
+        priceKoboPerTrillion: pricePerT,
+        minBulkGameAmount: bulk ? BigInt(bulk.minBulkGameAmount) : BigInt(minTrillions) * ONE_TRILLION,
+        maxBulkGameAmount: bulk?.maxBulkGameAmount ? BigInt(bulk.maxBulkGameAmount) : null,
+        bulkIncrementGameAmount: bulk?.bulkIncrementGameAmount
+          ? BigInt(bulk.bulkIncrementGameAmount)
+          : ONE_TRILLION,
+        tiers: (bulk?.tiers ?? []).map((t) => ({
+          minGameAmount: BigInt(t.minGameAmount),
+          priceKoboPerTrillion: BigInt(t.priceKoboPerTrillion),
+          label: t.label,
+        })),
+        promoDiscountBps: bulk?.promoDiscountBps ?? 0,
+      });
+      totalKobo = q.netFiatKobo;
+      validQuantity = true;
+    } catch {
+      validQuantity = false;
+      totalKobo = 0n;
+    }
+  }
 
   async function handleRetailOrder(packageId: string) {
     if (!recipientUsername.trim() || recipientUsername.trim().length < 2) {
@@ -181,7 +225,20 @@ export default function MarketplacePage() {
           </div>
         )}
 
-        {!loading && catalog && (!hasAvailableStock || !bulkEnabled) && (
+        {!loading && catalog && !salesEnabled && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-900">
+            {catalog.businessSettings?.maintenanceMessage ??
+              "Marketplace sales are temporarily paused for maintenance."}
+          </div>
+        )}
+
+        {!loading && catalog && salesEnabled && catalog.businessSettings?.customerAvailabilityNote && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-medium text-emerald-900">
+            {catalog.businessSettings.customerAvailabilityNote}
+          </div>
+        )}
+
+        {!loading && catalog && salesEnabled && (!hasAvailableStock || !bulkEnabled) && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             {!hasAvailableStock
               ? "Stock Sync Pending: Verified inventory is currently unavailable or awaiting refresh. Ordering will resume automatically once stock is synced."

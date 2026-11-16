@@ -352,19 +352,74 @@ export default function OwnerOrdersPage() {
   const [directReason, setDirectReason] = useState("");
   const [directBusy, setDirectBusy] = useState(false);
 
+  // Worker & Multi-Pipeline Control state
+  const [pipelineStatus, setPipelineStatus] = useState<{
+    disbursementEnabled: boolean;
+    workerHeartbeat: {
+      alive: boolean;
+      lastHeartbeatAt: string | null;
+      service: string | null;
+      disbursementEnabled: boolean | null;
+      intakePaused?: boolean | null;
+      permittedConcurrency?: number | null;
+    };
+    workerControl: {
+      intakePaused: boolean;
+      permittedConcurrency: number;
+      updatedAt: string | null;
+      reason: string | null;
+    };
+    queueStats: {
+      connected: boolean;
+      waiting: number;
+      active: number;
+      delayed: number;
+      failed: number;
+      completed: number;
+    };
+    accounts: Array<{
+      id: string;
+      slotCode: string;
+      lagoslifeUsername: string | null;
+      connectionStatus: string;
+      locked: boolean;
+      cooldownRemainingMs: number;
+      activeChunkCount: number;
+      rateLimitedChunkCount: number;
+      ambiguousChunkCount: number;
+    }>;
+  } | null>(null);
+  const [workerBusy, setWorkerBusy] = useState(false);
+  const [concurrencyInput, setConcurrencyInput] = useState("5");
+
+  const loadPipelineStatus = useCallback(async () => {
+    try {
+      const res = await apiRequest<NonNullable<typeof pipelineStatus>>("/owner/operations/pipelines");
+      setPipelineStatus(res);
+      if (res.workerControl?.permittedConcurrency) {
+        setConcurrencyInput(String(res.workerControl.permittedConcurrency));
+      }
+    } catch {
+      // Non-fatal if Redis/pipelines temporarily unavailable
+    }
+  }, []);
+
   const loadOrders = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const qs = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : "";
-      const res = await apiRequest<{ orders: OrderSummary[] }>(`/owner/orders${qs}`);
+      const [res] = await Promise.all([
+        apiRequest<{ orders: OrderSummary[] }>(`/owner/orders${qs}`),
+        loadPipelineStatus(),
+      ]);
       setOrders(res.orders ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load orders.");
     } finally {
       setLoading(false);
     }
-  }, [statusFilter]);
+  }, [statusFilter, loadPipelineStatus]);
 
   const resolveRecipientUsername = useCallback(async (username: string) => {
     const clean = username.replace(/^@/, "").trim();
@@ -806,6 +861,33 @@ export default function OwnerOrdersPage() {
   };
 
 
+  const handleWorkerControl = async (
+    action: "PAUSE_INTAKE" | "RESUME_INTAKE" | "SET_CONCURRENCY",
+    permittedConcurrency?: number
+  ) => {
+    setWorkerBusy(true);
+    setError(null);
+    setActionBanner(null);
+    try {
+      const res = await apiRequest<{
+        appliedNote: string;
+      }>("/owner/worker/control", {
+        method: "POST",
+        body: JSON.stringify({
+          action,
+          ...(permittedConcurrency ? { permittedConcurrency } : {}),
+          reason: `Owner ${action.toLowerCase()} via dashboard`,
+        }),
+      });
+      setActionBanner(res.appliedNote);
+      await loadPipelineStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update worker control.");
+    } finally {
+      setWorkerBusy(false);
+    }
+  };
+
   const handleCreateDirectOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     const numericT = Number(directAmountT);
@@ -878,6 +960,160 @@ export default function OwnerOrdersPage() {
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
             {actionBanner}
           </div>
+        )}
+
+        {pipelineStatus && (
+          <Card
+            title="Worker & Multi-Pipeline Control"
+            action={
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge
+                  label={pipelineStatus.workerHeartbeat.alive ? "Worker Online" : "Worker Offline"}
+                  tone={pipelineStatus.workerHeartbeat.alive ? "success" : "danger"}
+                />
+                <StatusBadge
+                  label={
+                    pipelineStatus.workerControl.intakePaused ? "Intake Paused" : "Intake Active"
+                  }
+                  tone={pipelineStatus.workerControl.intakePaused ? "warning" : "info"}
+                />
+                <Button size="sm" variant="secondary" onClick={loadPipelineStatus}>
+                  Refresh
+                </Button>
+              </div>
+            }
+          >
+            <div className="space-y-3 text-xs">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                  <div className="text-[10px] font-semibold uppercase text-slate-500">
+                    Last Heartbeat
+                  </div>
+                  <div className="mt-0.5 font-mono-tabular font-semibold text-slate-900">
+                    {pipelineStatus.workerHeartbeat.lastHeartbeatAt
+                      ? formatDateTime(pipelineStatus.workerHeartbeat.lastHeartbeatAt)
+                      : "None"}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                  <div className="text-[10px] font-semibold uppercase text-slate-500">
+                    Transfer Mode
+                  </div>
+                  <div className="mt-0.5 font-semibold text-slate-900">
+                    {pipelineStatus.workerHeartbeat.disbursementEnabled === true
+                      ? "LIVE TRANSFERS ENABLED"
+                      : "SAFE MODE (DISBURSEMENT_ENABLED=false)"}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                  <div className="text-[10px] font-semibold uppercase text-slate-500">
+                    BullMQ Queue
+                  </div>
+                  <div className="mt-0.5 font-mono-tabular font-semibold text-slate-900">
+                    W:{pipelineStatus.queueStats.waiting} · A:{pipelineStatus.queueStats.active} · D:
+                    {pipelineStatus.queueStats.delayed} · F:{pipelineStatus.queueStats.failed} · C:
+                    {pipelineStatus.queueStats.completed}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                  <div className="text-[10px] font-semibold uppercase text-slate-500">
+                    Permitted Concurrency
+                  </div>
+                  <div className="mt-0.5 font-mono-tabular font-semibold text-slate-900">
+                    {pipelineStatus.workerControl.permittedConcurrency} / 5 pipelines
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  {pipelineStatus.workerControl.intakePaused ? (
+                    <Button
+                      size="sm"
+                      variant="owner"
+                      disabled={workerBusy}
+                      onClick={() => handleWorkerControl("RESUME_INTAKE")}
+                    >
+                      Resume Job Intake
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={workerBusy}
+                      onClick={() => handleWorkerControl("PAUSE_INTAKE")}
+                    >
+                      Pause Job Intake
+                    </Button>
+                  )}
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-slate-600">Concurrency:</label>
+                    <select
+                      className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-mono-tabular"
+                      value={concurrencyInput}
+                      onChange={(e) => setConcurrencyInput(e.target.value)}
+                    >
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={workerBusy}
+                      onClick={() =>
+                        handleWorkerControl("SET_CONCURRENCY", Number(concurrencyInput))
+                      }
+                    >
+                      Apply
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  {pipelineStatus.workerHeartbeat.alive
+                    ? "Windows worker is connected; intake pause and concurrency updates apply within 15s."
+                    : "Worker is offline. The website cannot remotely start a stopped Windows process; run `node --env-file=.env.worker apps/api/dist/worker.js` on your Windows PC."}
+                </p>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-5">
+                {pipelineStatus.accounts.map((acc) => (
+                  <div
+                    key={acc.id}
+                    className="rounded-lg border border-slate-200 bg-white p-2 text-[11px]"
+                  >
+                    <div className="font-semibold text-slate-900">{acc.slotCode}</div>
+                    <div className="text-slate-500">
+                      {acc.lagoslifeUsername ? `@${acc.lagoslifeUsername}` : "Unconfigured"}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      <span
+                        className={`rounded px-1 py-0.5 font-semibold ${
+                          acc.locked
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {acc.locked ? "LOCKED" : "Free"}
+                      </span>
+                      {acc.cooldownRemainingMs > 0 && (
+                        <span className="rounded bg-indigo-100 px-1 py-0.5 font-semibold text-indigo-800">
+                          {Math.ceil(acc.cooldownRemainingMs / 1000)}s
+                        </span>
+                      )}
+                      {acc.ambiguousChunkCount > 0 && (
+                        <span className="rounded bg-rose-100 px-1 py-0.5 font-semibold text-rose-800">
+                          {acc.ambiguousChunkCount} ambig
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Card>
         )}
 
         <div className="flex flex-wrap gap-2">

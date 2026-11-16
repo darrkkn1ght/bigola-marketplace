@@ -43,20 +43,41 @@ export default function OwnerSettingsPage() {
   const [invitedEmail, setInvitedEmail] = useState<string | null>(null);
   const [regeneratingCodes, setRegeneratingCodes] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [marketplaceSalesEnabled, setMarketplaceSalesEnabled] = useState(true);
+  const [retailOrdersEnabled, setRetailOrdersEnabled] = useState(true);
+  const [bulkOrdersEnabled, setBulkOrdersEnabled] = useState(true);
+  const [maintenanceMessage, setMaintenanceMessage] = useState("");
+  const [customerAvailabilityNote, setCustomerAvailabilityNote] = useState("");
+  const [businessReason, setBusinessReason] = useState("");
+  const [savingBusiness, setSavingBusiness] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const { pushToast } = useToast();
 
   const loadSettings = useCallback(async () => {
     try {
-      const [invRes, logRes, coOwnerRes] = await Promise.all([
+      const [invRes, logRes, coOwnerRes, bizRes] = await Promise.all([
         apiRequest<{ maxAgeMinutes: number }>("/owner/inventory"),
         apiRequest<{ logs: AuditLogRow[] }>("/owner/audit-logs"),
         apiRequest<{ owners: CoOwnerRow[] }>("/owner/co-owners"),
+        apiRequest<{
+          businessSettings: {
+            marketplaceSalesEnabled: boolean;
+            retailOrdersEnabled: boolean;
+            bulkOrdersEnabled: boolean;
+            maintenanceMessage: string | null;
+            customerAvailabilityNote: string | null;
+          };
+        }>("/owner/business-settings"),
       ]);
       setFreshnessMinutes(String(invRes.maxAgeMinutes));
       setLogs(logRes.logs.slice(0, 25));
       setCoOwners(coOwnerRes.owners);
+      setMarketplaceSalesEnabled(bizRes.businessSettings.marketplaceSalesEnabled);
+      setRetailOrdersEnabled(bizRes.businessSettings.retailOrdersEnabled);
+      setBulkOrdersEnabled(bizRes.businessSettings.bulkOrdersEnabled);
+      setMaintenanceMessage(bizRes.businessSettings.maintenanceMessage ?? "");
+      setCustomerAvailabilityNote(bizRes.businessSettings.customerAvailabilityNote ?? "");
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -66,6 +87,38 @@ export default function OwnerSettingsPage() {
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  async function handleSaveBusinessSettings(e: React.FormEvent) {
+    e.preventDefault();
+    if (businessReason.trim().length < 3) {
+      setError("Enter an audit reason (min 3 chars) before saving business settings.");
+      return;
+    }
+    setSavingBusiness(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await apiRequest("/owner/business-settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          marketplaceSalesEnabled,
+          retailOrdersEnabled,
+          bulkOrdersEnabled,
+          maintenanceMessage: maintenanceMessage.trim() || null,
+          customerAvailabilityNote: customerAvailabilityNote.trim() || null,
+          reason: businessReason.trim(),
+        }),
+      });
+      setNotice("Business settings updated.");
+      pushToast({ title: "Business settings saved", tone: "success" });
+      setBusinessReason("");
+      await loadSettings();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSavingBusiness(false);
+    }
+  }
 
   async function savePolicy(endpoint: string, payload: Record<string, unknown>, label: string) {
     if (policyReason.trim().length < 3) {
@@ -162,6 +215,90 @@ export default function OwnerSettingsPage() {
             {notice}
           </div>
         )}
+
+        <Card
+          title="Business Settings & Customer Availability"
+          action={
+            <StatusBadge
+              label={marketplaceSalesEnabled ? "Marketplace Live" : "Sales Paused"}
+              tone={marketplaceSalesEnabled ? "success" : "danger"}
+            />
+          }
+        >
+          <form onSubmit={handleSaveBusinessSettings} className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium text-slate-800">
+                <span>Marketplace Sales</span>
+                <input
+                  type="checkbox"
+                  checked={marketplaceSalesEnabled}
+                  onChange={(e) => setMarketplaceSalesEnabled(e.target.checked)}
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium text-slate-800">
+                <span>Retail Orders</span>
+                <input
+                  type="checkbox"
+                  checked={retailOrdersEnabled}
+                  onChange={(e) => setRetailOrdersEnabled(e.target.checked)}
+                />
+              </label>
+              <label className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium text-slate-800">
+                <span>Bulk Orders</span>
+                <input
+                  type="checkbox"
+                  checked={bulkOrdersEnabled}
+                  onChange={(e) => setBulkOrdersEnabled(e.target.checked)}
+                />
+              </label>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Maintenance Message (shown when sales paused)
+                </label>
+                <input
+                  type="text"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs"
+                  placeholder="e.g. Scheduled maintenance, back in 30 mins"
+                  value={maintenanceMessage}
+                  onChange={(e) => setMaintenanceMessage(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Customer Availability Note
+                </label>
+                <input
+                  type="text"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs"
+                  placeholder="e.g. Instant fulfilment active 8am–11pm WAT"
+                  value={customerAvailabilityNote}
+                  onChange={(e) => setCustomerAvailabilityNote(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex-1 min-w-[220px]">
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Audit Reason (min 3 chars)
+                </label>
+                <input
+                  type="text"
+                  required
+                  minLength={3}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs"
+                  placeholder="e.g. Toggle storefront sales status"
+                  value={businessReason}
+                  onChange={(e) => setBusinessReason(e.target.value)}
+                />
+              </div>
+              <Button type="submit" variant="owner" disabled={savingBusiness}>
+                {savingBusiness ? "Saving..." : "Save Business Settings"}
+              </Button>
+            </div>
+          </form>
+        </Card>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Card title="Security & Safeguards">

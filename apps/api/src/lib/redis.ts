@@ -15,6 +15,16 @@ export interface WorkerHeartbeatInfo {
   lastHeartbeatAt: string | null;
   service: string | null;
   disbursementEnabled: boolean | null;
+  intakePaused?: boolean | null;
+  permittedConcurrency?: number | null;
+}
+
+export interface WorkerControlState {
+  intakePaused: boolean;
+  permittedConcurrency: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  reason: string | null;
 }
 
 export interface QueueInfrastructure {
@@ -25,8 +35,15 @@ export interface QueueInfrastructure {
   prefix: string;
   ping(): Promise<boolean>;
   getDisbursementQueueStats(): Promise<DisbursementQueueStats>;
-  recordWorkerHeartbeat(meta: { service: string; disbursementEnabled: boolean }): Promise<void>;
+  recordWorkerHeartbeat(meta: {
+    service: string;
+    disbursementEnabled: boolean;
+    intakePaused?: boolean;
+    permittedConcurrency?: number;
+  }): Promise<void>;
   getWorkerHeartbeat(): Promise<WorkerHeartbeatInfo>;
+  getWorkerControl(): Promise<WorkerControlState>;
+  setWorkerControl(next: Partial<WorkerControlState>): Promise<WorkerControlState>;
   close(): Promise<void>;
 }
 
@@ -46,6 +63,14 @@ export function createBullMqConnection(redisUrl: string): Redis {
 
 export function createQueueInfrastructure(redisUrl?: string, prefix = "bigola_mp"): QueueInfrastructure {
   const heartbeatKey = `${prefix}:worker:heartbeat`;
+  const controlKey = `${prefix}:worker:control`;
+  const defaultControl: WorkerControlState = {
+    intakePaused: false,
+    permittedConcurrency: 5,
+    updatedAt: null,
+    updatedBy: null,
+    reason: null,
+  };
 
   if (!redisUrl) {
     return {
@@ -62,7 +87,25 @@ export function createQueueInfrastructure(redisUrl?: string, prefix = "bigola_mp
       },
       async recordWorkerHeartbeat() {},
       async getWorkerHeartbeat() {
-        return { alive: false, lastHeartbeatAt: null, service: null, disbursementEnabled: null };
+        return {
+          alive: false,
+          lastHeartbeatAt: null,
+          service: null,
+          disbursementEnabled: null,
+          intakePaused: null,
+          permittedConcurrency: null,
+        };
+      },
+      async getWorkerControl() {
+        return { ...defaultControl };
+      },
+      async setWorkerControl(next) {
+        return {
+          ...defaultControl,
+          ...next,
+          permittedConcurrency: Math.min(5, Math.max(1, Math.floor(next.permittedConcurrency ?? 5))),
+          updatedAt: new Date().toISOString(),
+        };
       },
       async close() {},
     };
@@ -139,6 +182,9 @@ export function createQueueInfrastructure(redisUrl?: string, prefix = "bigola_mp
           lastHeartbeatAt: new Date().toISOString(),
           service: meta.service,
           disbursementEnabled: meta.disbursementEnabled,
+          intakePaused: typeof meta.intakePaused === "boolean" ? meta.intakePaused : null,
+          permittedConcurrency:
+            typeof meta.permittedConcurrency === "number" ? meta.permittedConcurrency : null,
         });
         await redis.set(heartbeatKey, payload, "EX", 45);
       } catch {
@@ -149,12 +195,21 @@ export function createQueueInfrastructure(redisUrl?: string, prefix = "bigola_mp
       try {
         const raw = await redis.get(heartbeatKey);
         if (!raw) {
-          return { alive: false, lastHeartbeatAt: null, service: null, disbursementEnabled: null };
+          return {
+            alive: false,
+            lastHeartbeatAt: null,
+            service: null,
+            disbursementEnabled: null,
+            intakePaused: null,
+            permittedConcurrency: null,
+          };
         }
         const parsed = JSON.parse(raw) as {
           lastHeartbeatAt?: string;
           service?: string;
           disbursementEnabled?: boolean;
+          intakePaused?: boolean | null;
+          permittedConcurrency?: number | null;
         };
         return {
           alive: true,
@@ -162,10 +217,55 @@ export function createQueueInfrastructure(redisUrl?: string, prefix = "bigola_mp
           service: parsed.service ?? null,
           disbursementEnabled:
             typeof parsed.disbursementEnabled === "boolean" ? parsed.disbursementEnabled : null,
+          intakePaused: typeof parsed.intakePaused === "boolean" ? parsed.intakePaused : null,
+          permittedConcurrency:
+            typeof parsed.permittedConcurrency === "number" ? parsed.permittedConcurrency : null,
         };
       } catch {
-        return { alive: false, lastHeartbeatAt: null, service: null, disbursementEnabled: null };
+        return {
+          alive: false,
+          lastHeartbeatAt: null,
+          service: null,
+          disbursementEnabled: null,
+          intakePaused: null,
+          permittedConcurrency: null,
+        };
       }
+    },
+    async getWorkerControl() {
+      try {
+        const raw = await redis.get(controlKey);
+        if (!raw) return { ...defaultControl };
+        const parsed = JSON.parse(raw) as Partial<WorkerControlState>;
+        const rawConc = Number(parsed.permittedConcurrency ?? 5);
+        return {
+          intakePaused: parsed.intakePaused === true,
+          permittedConcurrency: Number.isFinite(rawConc)
+            ? Math.min(5, Math.max(1, Math.floor(rawConc)))
+            : 5,
+          updatedAt: parsed.updatedAt ?? null,
+          updatedBy: parsed.updatedBy ?? null,
+          reason: parsed.reason ?? null,
+        };
+      } catch {
+        return { ...defaultControl };
+      }
+    },
+    async setWorkerControl(next) {
+      const current = await this.getWorkerControl();
+      const rawConc = Number(next.permittedConcurrency ?? current.permittedConcurrency);
+      const merged: WorkerControlState = {
+        intakePaused:
+          typeof next.intakePaused === "boolean" ? next.intakePaused : current.intakePaused,
+        permittedConcurrency: Number.isFinite(rawConc)
+          ? Math.min(5, Math.max(1, Math.floor(rawConc)))
+          : current.permittedConcurrency,
+        updatedAt: new Date().toISOString(),
+        updatedBy: next.updatedBy !== undefined ? next.updatedBy : current.updatedBy,
+        reason: next.reason !== undefined ? next.reason : current.reason,
+      };
+      await redis.set(controlKey, JSON.stringify(merged));
+      return merged;
     },
     async close() {
       const closeResults = await Promise.allSettled([

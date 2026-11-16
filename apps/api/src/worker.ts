@@ -70,6 +70,8 @@ async function startWorker() {
     }
   }
 
+  const initialControl = await queues.getWorkerControl();
+
   const disbursementWorker = createBullMqWorker(
     "disbursement-chunks",
     env.REDIS_URL,
@@ -82,6 +84,25 @@ async function startWorker() {
 
       if (!env.DISBURSEMENT_ENABLED) {
         return { skipped: true, reason: "DISBURSEMENT_DISABLED" };
+      }
+
+      const control = await queues.getWorkerControl();
+      if (control.intakePaused) {
+        if (!disbursementWorker.isPaused()) {
+          await disbursementWorker.pause();
+        }
+        if (queues.disbursementQueue) {
+          await queues.disbursementQueue.add(
+            "process-disbursement-job",
+            payload,
+            {
+              jobId: `disb_exec_${payload.jobId}_paused_${Date.now()}`,
+              delay: 15_000,
+              attempts: 1,
+            }
+          );
+        }
+        return { skipped: true, reason: "WORKER_INTAKE_PAUSED_REQUEUED" };
       }
 
       const { job, nextDelayMs } = await disbursementService.processJobStepForWorker({
@@ -113,10 +134,14 @@ async function startWorker() {
       };
     },
     {
-      concurrency: 5, // Up to 5 independent LagosLife account pipelines concurrently
+      concurrency: initialControl.permittedConcurrency, // Bounded 1..5, controlled via Owner Dashboard
       lockDuration: 90_000,
     }
   );
+
+  if (initialControl.intakePaused) {
+    await disbursementWorker.pause();
+  }
 
   const infraWorker = createBullMqWorker(
     "infra-health",
@@ -162,16 +187,28 @@ async function startWorker() {
     console.error(`[order-expiry] job ${job?.id} failed:`, err);
   });
 
-  await queues.recordWorkerHeartbeat({
-    service: "bigola-marketplace-worker",
-    disbursementEnabled: env.DISBURSEMENT_ENABLED,
-  });
-
-  const heartbeatTimer = setInterval(() => {
-    void queues.recordWorkerHeartbeat({
+  const syncWorkerControlAndHeartbeat = async () => {
+    const control = await queues.getWorkerControl();
+    if (control.intakePaused && !disbursementWorker.isPaused()) {
+      await disbursementWorker.pause();
+    } else if (!control.intakePaused && disbursementWorker.isPaused()) {
+      disbursementWorker.resume();
+    }
+    if (disbursementWorker.concurrency !== control.permittedConcurrency) {
+      disbursementWorker.concurrency = control.permittedConcurrency;
+    }
+    await queues.recordWorkerHeartbeat({
       service: "bigola-marketplace-worker",
       disbursementEnabled: env.DISBURSEMENT_ENABLED,
+      intakePaused: control.intakePaused,
+      permittedConcurrency: control.permittedConcurrency,
     });
+  };
+
+  await syncWorkerControlAndHeartbeat();
+
+  const heartbeatTimer = setInterval(() => {
+    void syncWorkerControlAndHeartbeat();
   }, 15_000);
   heartbeatTimer.unref();
 

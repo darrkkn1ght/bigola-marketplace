@@ -84,6 +84,20 @@ const overrideAttributionSchema = z.object({
 const updateBulkPricingSchema = z.object({
   priceKoboPerTrillion: z.string().regex(/^\d+$/),
   minBulkGameAmount: z.string().regex(/^\d+$/),
+  maxBulkGameAmount: z.string().regex(/^\d+$/).nullable().optional(),
+  bulkIncrementGameAmount: z.string().regex(/^\d+$/).optional(),
+  promoDiscountBps: z.number().int().min(0).max(9000).optional(),
+  promoLabel: z.string().max(80).nullable().optional(),
+  tiers: z
+    .array(
+      z.object({
+        minGameAmount: z.string().regex(/^\d+$/),
+        priceKoboPerTrillion: z.string().regex(/^\d+$/),
+        label: z.string().max(80).optional(),
+      })
+    )
+    .max(20)
+    .optional(),
   enabled: z.boolean().default(true),
   reason: z.string().min(3).max(500),
 });
@@ -98,9 +112,26 @@ const updateRetailPricingSchema = z.object({
         gameAmount: z.string().regex(/^\d+$/),
         fiatKobo: z.string().regex(/^\d+$/),
         enabled: z.boolean().default(true),
+        promoFiatKobo: z.string().regex(/^\d+$/).nullable().optional(),
+        promoLabel: z.string().max(80).nullable().optional(),
       })
     )
     .default([]),
+  reason: z.string().min(3).max(500),
+});
+
+const updateBusinessSettingsSchema = z.object({
+  marketplaceSalesEnabled: z.boolean(),
+  retailOrdersEnabled: z.boolean(),
+  bulkOrdersEnabled: z.boolean(),
+  maintenanceMessage: z.string().max(400).nullable().optional(),
+  customerAvailabilityNote: z.string().max(400).nullable().optional(),
+  reason: z.string().min(3).max(500),
+});
+
+const workerControlSchema = z.object({
+  action: z.enum(["PAUSE_INTAKE", "RESUME_INTAKE", "SET_CONCURRENCY"]),
+  permittedConcurrency: z.number().int().min(1).max(5).optional(),
   reason: z.string().min(3).max(500),
 });
 
@@ -681,6 +712,67 @@ export function registerOwnerRoutes(
 
   // --- Phase 4: Pricing, Freshness, Hoarding, Inventory & Central Order Management ---
 
+  app.get("/api/v1/owner/business-settings", { preHandler: ownerGuard }, async (_request, reply) => {
+    const settings = await deps.platformStore.getSettings();
+    const raw = (settings.find((s) => s.key === "business_settings")?.value ?? {}) as Record<
+      string,
+      unknown
+    >;
+    return reply.code(200).send({
+      businessSettings: {
+        marketplaceSalesEnabled: raw.marketplaceSalesEnabled !== false,
+        retailOrdersEnabled: raw.retailOrdersEnabled !== false,
+        bulkOrdersEnabled: raw.bulkOrdersEnabled !== false,
+        maintenanceMessage:
+          typeof raw.maintenanceMessage === "string" && raw.maintenanceMessage.trim()
+            ? raw.maintenanceMessage.trim()
+            : null,
+        customerAvailabilityNote:
+          typeof raw.customerAvailabilityNote === "string" && raw.customerAvailabilityNote.trim()
+            ? raw.customerAvailabilityNote.trim()
+            : null,
+      },
+    });
+  });
+
+  app.put(
+    "/api/v1/owner/business-settings",
+    { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_SETTINGS_MANAGE)] },
+    async (request, reply) => {
+      const parsed = updateBusinessSettingsSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply
+          .code(400)
+          .send({ error: "Invalid business settings payload.", issues: parsed.error.issues });
+      }
+      const nextValue = {
+        marketplaceSalesEnabled: parsed.data.marketplaceSalesEnabled,
+        retailOrdersEnabled: parsed.data.retailOrdersEnabled,
+        bulkOrdersEnabled: parsed.data.bulkOrdersEnabled,
+        maintenanceMessage: parsed.data.maintenanceMessage?.trim() || null,
+        customerAvailabilityNote: parsed.data.customerAvailabilityNote?.trim() || null,
+      };
+      const before =
+        (await deps.platformStore.getSettings()).find((s) => s.key === "business_settings") ?? null;
+      const updated = await deps.platformStore.upsertSetting(
+        "business_settings",
+        nextValue,
+        request.auth!.userId
+      );
+      await deps.audit.record({
+        actorUserId: request.auth!.userId,
+        actionType: "BUSINESS_SETTINGS_UPDATED",
+        targetEntity: "platform_settings",
+        targetId: "business_settings",
+        beforeState: before ? { value: before.value } : null,
+        afterState: nextValue,
+        reason: parsed.data.reason,
+        ipAddress: request.ip,
+      });
+      return reply.code(200).send({ setting: updated, businessSettings: nextValue });
+    }
+  );
+
   app.get("/api/v1/owner/pricing", { preHandler: ownerGuard }, async (_request, reply) => {
     const orderService =
       deps.orderService ?? (deps.prisma ? new OrderService(deps.prisma) : null);
@@ -699,9 +791,22 @@ export function registerOwnerRoutes(
       if (!parsed.success) {
         return reply.code(400).send({ error: "Invalid bulk pricing payload.", issues: parsed.error.issues });
       }
+      if (
+        parsed.data.maxBulkGameAmount &&
+        BigInt(parsed.data.maxBulkGameAmount) < BigInt(parsed.data.minBulkGameAmount)
+      ) {
+        return reply
+          .code(400)
+          .send({ error: "Maximum bulk order amount must be >= minimum bulk order amount." });
+      }
       const nextValue = {
         priceKoboPerTrillion: parsed.data.priceKoboPerTrillion,
         minBulkGameAmount: parsed.data.minBulkGameAmount,
+        maxBulkGameAmount: parsed.data.maxBulkGameAmount ?? null,
+        bulkIncrementGameAmount: parsed.data.bulkIncrementGameAmount ?? "1000000000000",
+        promoDiscountBps: parsed.data.promoDiscountBps ?? 0,
+        promoLabel: parsed.data.promoLabel?.trim() || null,
+        tiers: parsed.data.tiers ?? [],
         enabled: parsed.data.enabled,
         configurableByOwner: true,
       };
@@ -2272,7 +2377,7 @@ export function registerOwnerRoutes(
       if (!disbSvc) {
         return reply.code(503).send({ error: "Disbursement service unavailable." });
       }
-      const [overview, queueStats, workerHeartbeat] = await Promise.all([
+      const [overview, queueStats, workerHeartbeat, workerControl] = await Promise.all([
         disbSvc.getOperationalPipelineOverview(),
         deps.queues
           ? deps.queues.getDisbursementQueueStats()
@@ -2291,12 +2396,88 @@ export function registerOwnerRoutes(
               lastHeartbeatAt: null,
               service: null,
               disbursementEnabled: null,
+              intakePaused: null,
+              permittedConcurrency: null,
+            }),
+        deps.queues
+          ? deps.queues.getWorkerControl()
+          : Promise.resolve({
+              intakePaused: false,
+              permittedConcurrency: 5,
+              updatedAt: null,
+              updatedBy: null,
+              reason: null,
             }),
       ]);
       return reply.code(200).send({
         ...overview,
         queueStats,
         workerHeartbeat,
+        workerControl,
+      });
+    }
+  );
+
+  app.post(
+    "/api/v1/owner/worker/control",
+    { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_SETTINGS_MANAGE)] },
+    async (request, reply) => {
+      if (!deps.queues) {
+        return reply.code(503).send({ error: "Redis queue infrastructure is unavailable." });
+      }
+      const parsed = workerControlSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply
+          .code(400)
+          .send({ error: "Invalid worker control payload.", issues: parsed.error.issues });
+      }
+
+      const before = await deps.queues.getWorkerControl();
+      let patch: {
+        intakePaused?: boolean;
+        permittedConcurrency?: number;
+        updatedBy: string;
+        reason: string;
+      } = {
+        updatedBy: request.auth!.userId,
+        reason: parsed.data.reason,
+      };
+
+      if (parsed.data.action === "PAUSE_INTAKE") {
+        patch.intakePaused = true;
+      } else if (parsed.data.action === "RESUME_INTAKE") {
+        patch.intakePaused = false;
+      } else if (parsed.data.action === "SET_CONCURRENCY") {
+        if (!parsed.data.permittedConcurrency) {
+          return reply
+            .code(400)
+            .send({ error: "permittedConcurrency (1..5) is required for SET_CONCURRENCY." });
+        }
+        patch.permittedConcurrency = parsed.data.permittedConcurrency;
+      }
+
+      const workerControl = await deps.queues.setWorkerControl(patch);
+      const workerHeartbeat = await deps.queues.getWorkerHeartbeat();
+
+      await deps.audit.record({
+        actorUserId: request.auth!.userId,
+        actionType: "WORKER_CONTROL_UPDATED",
+        targetEntity: "worker_control",
+        targetId: deps.queues.prefix,
+        beforeState: before as unknown as Record<string, unknown>,
+        afterState: workerControl as unknown as Record<string, unknown>,
+        reason: parsed.data.reason,
+        ipAddress: request.ip,
+      });
+
+      const appliedNote = workerHeartbeat.alive
+        ? "Control state saved to Redis. The active Windows worker will apply it within 15 seconds on its next heartbeat/job cycle."
+        : "Control state saved to Redis, but the Windows worker is currently OFFLINE. Start it locally with `node --env-file=.env.worker apps/api/dist/worker.js` to process jobs.";
+
+      return reply.code(200).send({
+        workerControl,
+        workerHeartbeat,
+        appliedNote,
       });
     }
   );

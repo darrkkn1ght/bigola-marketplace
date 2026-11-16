@@ -13,12 +13,20 @@ export const DEFAULT_INVENTORY_MAX_AGE_MINUTES = 60;
 export const DEFAULT_MAX_ACTIVE_UNPAID_ORDERS_PER_CUSTOMER = 3;
 export const DEFAULT_MAX_RESERVED_GAME_AMOUNT_PER_CUSTOMER = 500_000_000_000_000n; // 500 Trillion
 
+export interface BulkTierConfig {
+  minGameAmount: string; // integer string in-game Naira
+  priceKoboPerTrillion: string; // integer string kobo
+  label?: string;
+}
+
 export interface RetailPackageConfig {
   id: string;
   name: string;
   gameAmount: string; // integer string in-game Naira
   fiatKobo: string; // integer string kobo
   enabled: boolean;
+  promoFiatKobo?: string | null;
+  promoLabel?: string | null;
 }
 
 export type CustomerCategory = "CATEGORY_A_PARTNER" | "CATEGORY_B_BIGOLA";
@@ -123,6 +131,77 @@ export function calculateBulkOrderFiatKobo(
     throw new Error("Bulk orders must be in whole 1 Trillion increments.");
   }
   return (gameAmount / ONE_TRILLION) * priceKoboPerTrillion;
+}
+
+export interface BulkOrderQuoteInput {
+  priceKoboPerTrillion: bigint;
+  minBulkGameAmount: bigint;
+  maxBulkGameAmount?: bigint | null;
+  bulkIncrementGameAmount?: bigint | null;
+  tiers?: Array<{ minGameAmount: bigint; priceKoboPerTrillion: bigint; label?: string }>;
+  promoDiscountBps?: number | null;
+}
+
+export interface BulkOrderQuoteResult {
+  unitPriceKoboPerTrillion: bigint;
+  grossFiatKobo: bigint;
+  discountKobo: bigint;
+  netFiatKobo: bigint;
+  appliedTierLabel: string | null;
+}
+
+export function calculateBulkOrderQuote(
+  gameAmount: bigint,
+  config: BulkOrderQuoteInput
+): BulkOrderQuoteResult {
+  if (gameAmount < config.minBulkGameAmount) {
+    throw new Error(`Bulk orders require at least ${config.minBulkGameAmount.toString()} in-game Naira.`);
+  }
+  if (config.maxBulkGameAmount && gameAmount > config.maxBulkGameAmount) {
+    throw new Error(`Bulk orders cannot exceed ${config.maxBulkGameAmount.toString()} in-game Naira.`);
+  }
+  const increment =
+    config.bulkIncrementGameAmount && config.bulkIncrementGameAmount > 0n
+      ? config.bulkIncrementGameAmount
+      : ONE_TRILLION;
+  if (gameAmount % ONE_TRILLION !== 0n) {
+    throw new Error("Bulk orders must be in whole 1 Trillion increments.");
+  }
+  if (gameAmount % increment !== 0n) {
+    throw new Error(`Bulk orders must be in multiples of ${increment.toString()} in-game Naira.`);
+  }
+
+  let unitPriceKoboPerTrillion = config.priceKoboPerTrillion;
+  let appliedTierLabel: string | null = null;
+  if (config.tiers && config.tiers.length > 0) {
+    const sortedTiers = [...config.tiers].sort((a, b) =>
+      a.minGameAmount > b.minGameAmount ? -1 : a.minGameAmount < b.minGameAmount ? 1 : 0
+    );
+    const matched = sortedTiers.find((t) => gameAmount >= t.minGameAmount);
+    if (matched) {
+      unitPriceKoboPerTrillion = matched.priceKoboPerTrillion;
+      appliedTierLabel = matched.label ?? null;
+    }
+  }
+
+  const grossFiatKobo = (gameAmount / ONE_TRILLION) * unitPriceKoboPerTrillion;
+  const promoBps =
+    typeof config.promoDiscountBps === "number" &&
+    Number.isInteger(config.promoDiscountBps) &&
+    config.promoDiscountBps > 0 &&
+    config.promoDiscountBps <= 9000
+      ? config.promoDiscountBps
+      : 0;
+  const discountKobo = promoBps > 0 ? (grossFiatKobo * BigInt(promoBps)) / 10000n : 0n;
+  const netFiatKobo = grossFiatKobo - discountKobo;
+
+  return {
+    unitPriceKoboPerTrillion,
+    grossFiatKobo,
+    discountKobo,
+    netFiatKobo,
+    appliedTierLabel,
+  };
 }
 
 export function normalizeEmail(email: string): string {
