@@ -48,10 +48,6 @@ function RegisterForm() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!referralCode.trim()) {
-      setError("A valid partner referral code is required to create an account.");
-      return;
-    }
     setLoading(true);
     try {
       await apiRequest("/auth/register", {
@@ -61,7 +57,7 @@ function RegisterForm() {
           email: email.trim(),
           phone: phone.trim() || undefined,
           lagoslifeUsername: lagoslifeUsername.trim() || undefined,
-          referralCode: referralCode.trim(),
+          referralCode: referralCode.trim() || undefined,
           password,
         }),
       });
@@ -154,11 +150,10 @@ function RegisterForm() {
 
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">
-              Partner Referral Code (required)
+              Referral Code (optional)
             </label>
             <input
               type="text"
-              required
               className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 font-mono-tabular text-sm text-slate-900 focus:border-[#059669] focus:outline-none"
               placeholder="e.g. BGO-123ABC"
               value={referralCode}

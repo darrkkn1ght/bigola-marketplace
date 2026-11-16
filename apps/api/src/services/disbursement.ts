@@ -1802,14 +1802,24 @@ export class DisbursementService {
     ipAddress?: string;
   }): Promise<void> {
     const now = new Date();
+    const maxAttempts = 3;
 
-    await this.prisma.$transaction(async (tx) => {
-      const chunk = await tx.disbursementChunk.findUnique({
-        where: { id: params.chunkId },
-      });
-      if (!chunk || chunk.status === DisbursementChunkStatus.SUCCEEDED) {
-        return;
-      }
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          // Serialize concurrent multi-account commits for the same job to prevent 40P01 deadlocks
+          if (typeof tx.$queryRaw === "function") {
+            await tx.$queryRaw`
+              SELECT id FROM disbursement_jobs WHERE id = ${params.jobId}::uuid FOR UPDATE
+            `;
+          }
+
+          const chunk = await tx.disbursementChunk.findUnique({
+            where: { id: params.chunkId },
+          });
+          if (!chunk || chunk.status === DisbursementChunkStatus.SUCCEEDED) {
+            return;
+          }
 
       await tx.disbursementChunk.update({
         where: { id: params.chunkId },
@@ -2052,6 +2062,22 @@ export class DisbursementService {
         },
       });
     }, DISBURSEMENT_TX_OPTIONS);
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const isDeadlock =
+          msg.includes("40P01") ||
+          msg.toLowerCase().includes("deadlock detected") ||
+          (typeof err === "object" &&
+            err !== null &&
+            "code" in err &&
+            (err as { code?: string }).code === "P2034");
+        if (!isDeadlock || attempt >= maxAttempts) {
+          throw err;
+        }
+        await this.sleepFn(50 * attempt);
+      }
+    }
   }
 
   private async pauseJobOnAccountError(

@@ -210,69 +210,65 @@ export class AttributionService {
     }
 
     const effectiveCode = cookieCode ?? bodyCode;
-    if (!effectiveCode) {
-      throw new AttributionError(
-        400,
-        "REFERRAL_CODE_REQUIRED",
-        "A valid partner referral code is required to register."
-      );
-    }
-
-    const attributionSource = cookieCode
-      ? AttributionSource.REF_LINK
-      : AttributionSource.REF_CODE;
-
-    const partner = await this.prisma.partner.findUnique({
-      where: { referralCode: effectiveCode },
-      select: {
-        id: true,
-        referralCode: true,
-        status: true,
-        user: { select: { email: true, phone: true } },
-      },
-    });
+    const attributionSource = effectiveCode
+      ? cookieCode
+        ? AttributionSource.REF_LINK
+        : AttributionSource.REF_CODE
+      : null;
 
     let attributedPartner: { id: string; referralCode: string } | null = null;
     let attributedOwner: { id: string; referralCode: string } | null = null;
 
-    if (partner) {
-      if (partner.status !== PartnerStatus.ACTIVE) {
-        throw new AttributionError(400, "INVALID_REFERRAL_CODE", "Referral code is invalid or inactive.");
-      }
-      const partnerEmail = partner.user?.email ? normalizeEmail(partner.user.email) : null;
-      const partnerPhone = partner.user?.phone ? normalizePhone(partner.user.phone) : null;
-      if (
-        (partnerEmail && partnerEmail === normalizedEmail) ||
-        (normalizedPhone && partnerPhone && partnerPhone === normalizedPhone)
-      ) {
-        throw new AttributionError(
-          400,
-          "SELF_REFERRAL_NOT_ALLOWED",
-          "You cannot register using your own partner referral code."
-        );
-      }
-      attributedPartner = { id: partner.id, referralCode: partner.referralCode };
-    } else {
-      const ownerUser = await this.prisma.user.findUnique({
+    if (effectiveCode) {
+      const partner = await this.prisma.partner.findUnique({
         where: { referralCode: effectiveCode },
-        select: { id: true, referralCode: true, role: true, isActive: true, email: true, phone: true },
+        select: {
+          id: true,
+          referralCode: true,
+          status: true,
+          user: { select: { email: true, phone: true } },
+        },
       });
-      if (!ownerUser || ownerUser.role !== UserRole.OWNER || !ownerUser.isActive || !ownerUser.referralCode) {
-        throw new AttributionError(400, "INVALID_REFERRAL_CODE", "Referral code is invalid or inactive.");
+
+      if (partner) {
+        if (partner.status !== PartnerStatus.ACTIVE) {
+          throw new AttributionError(400, "INVALID_REFERRAL_CODE", "Referral code is invalid or inactive.");
+        }
+        const partnerEmail = partner.user?.email ? normalizeEmail(partner.user.email) : null;
+        const partnerPhone = partner.user?.phone ? normalizePhone(partner.user.phone) : null;
+        if (
+          (partnerEmail && partnerEmail === normalizedEmail) ||
+          (normalizedPhone && partnerPhone && partnerPhone === normalizedPhone)
+        ) {
+          throw new AttributionError(
+            400,
+            "SELF_REFERRAL_NOT_ALLOWED",
+            "You cannot register using your own partner referral code."
+          );
+        }
+        attributedPartner = { id: partner.id, referralCode: partner.referralCode };
+      } else {
+        const ownerUser = await this.prisma.user.findUnique({
+          where: { referralCode: effectiveCode },
+          select: { id: true, referralCode: true, role: true, isActive: true, email: true, phone: true },
+        });
+        if (!ownerUser || ownerUser.role !== UserRole.OWNER || !ownerUser.isActive || !ownerUser.referralCode) {
+          throw new AttributionError(400, "INVALID_REFERRAL_CODE", "Referral code is invalid or inactive.");
+        }
+        const ownerEmail = ownerUser.email ? normalizeEmail(ownerUser.email) : null;
+        const ownerPhone = ownerUser.phone ? normalizePhone(ownerUser.phone) : null;
+        if (
+          (ownerEmail && ownerEmail === normalizedEmail) ||
+          (normalizedPhone && ownerPhone && ownerPhone === normalizedPhone)
+        ) {
+          throw new AttributionError(
+            400,
+            "SELF_REFERRAL_NOT_ALLOWED",
+            "You cannot register using your own owner referral code."
+          );
+        }
+        attributedOwner = { id: ownerUser.id, referralCode: ownerUser.referralCode };
       }
-      const ownerEmail = ownerUser.email ? normalizeEmail(ownerUser.email) : null;
-      const ownerPhone = ownerUser.phone ? normalizePhone(ownerUser.phone) : null;
-      if (
-        (ownerEmail && ownerEmail === normalizedEmail) ||
-        (normalizedPhone && ownerPhone && ownerPhone === normalizedPhone)
-      ) {
-        throw new AttributionError(
-          400,
-          "SELF_REFERRAL_NOT_ALLOWED",
-          "You cannot register using your own owner referral code."
-        );
-      }
-      attributedOwner = { id: ownerUser.id, referralCode: ownerUser.referralCode };
     }
 
     const passwordHash = await hashPassword(input.password);
@@ -326,7 +322,7 @@ export class AttributionService {
             category,
             attributedPartnerId: attributedPartner ? attributedPartner.id : null,
             attributedOwnerUserId: attributedOwner ? attributedOwner.id : null,
-            attributedAt: new Date(),
+            attributedAt: effectiveCode ? new Date() : null,
             attributionSource,
           },
         });
