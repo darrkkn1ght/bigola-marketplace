@@ -194,6 +194,10 @@ export class OrderService {
         businessVal.customerAvailabilityNote.trim()
           ? businessVal.customerAvailabilityNote.trim()
           : null,
+      whatsappNumber:
+        typeof businessVal.whatsappNumber === "string" && businessVal.whatsappNumber.trim()
+          ? businessVal.whatsappNumber.trim()
+          : null,
     };
 
     const bulkSetting = byKey.has("bulk_pricing") ? { value: byKey.get("bulk_pricing") } : null;

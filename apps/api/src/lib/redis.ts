@@ -32,6 +32,7 @@ export interface QueueInfrastructure {
   disbursementQueue: Queue | null;
   orderExpiryQueue: Queue | null;
   infraHealthQueue: Queue | null;
+  inventorySyncQueue: Queue | null;
   prefix: string;
   ping(): Promise<boolean>;
   getDisbursementQueueStats(): Promise<DisbursementQueueStats>;
@@ -78,6 +79,7 @@ export function createQueueInfrastructure(redisUrl?: string, prefix = "bigola_mp
       disbursementQueue: null,
       orderExpiryQueue: null,
       infraHealthQueue: null,
+      inventorySyncQueue: null,
       prefix,
       async ping() {
         return false;
@@ -141,11 +143,21 @@ export function createQueueInfrastructure(redisUrl?: string, prefix = "bigola_mp
     },
   });
 
+  const inventorySyncQueue = new Queue("inventory-sync", {
+    connection: workerConn,
+    prefix,
+    defaultJobOptions: {
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    },
+  });
+
   return {
     redis,
     disbursementQueue,
     orderExpiryQueue,
     infraHealthQueue,
+    inventorySyncQueue,
     prefix,
     async ping() {
       try {
@@ -272,6 +284,7 @@ export function createQueueInfrastructure(redisUrl?: string, prefix = "bigola_mp
         disbursementQueue.close(),
         orderExpiryQueue.close(),
         infraHealthQueue.close(),
+        inventorySyncQueue.close(),
       ]);
       for (const result of closeResults) {
         if (result.status === "rejected") {

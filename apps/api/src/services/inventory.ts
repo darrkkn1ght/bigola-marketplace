@@ -1411,20 +1411,41 @@ export class InventoryService {
   async syncAllLiveBalances(input: {
     actorUserId: string;
     ipAddress?: string;
+    skipInFlight?: boolean;
   }) {
     const accounts = await this.prisma.gameAccount.findMany({
       orderBy: { slotCode: "asc" },
     });
 
+    const inFlightAccountIds =
+      input.skipInFlight !== false && this.prisma.disbursementChunk
+        ? new Set(
+            (
+              await this.prisma.disbursementChunk.findMany({
+                where: { status: "IN_FLIGHT" },
+                select: { sourceAccountId: true },
+              })
+            ).map((c) => c.sourceAccountId)
+          )
+        : new Set<string>();
+
     const results: Array<{
       slotCode: string;
-      status: "SYNCED" | "SKIPPED_DISCONNECTED" | "SESSION_EXPIRED" | "ERROR";
+      status: "SYNCED" | "SKIPPED_DISCONNECTED" | "SKIPPED_IN_FLIGHT" | "SESSION_EXPIRED" | "ERROR";
       observedBalance?: string;
       discrepancy?: { id: string; deltaAmount: string } | null;
       error?: string;
     }> = [];
 
     for (const acc of accounts) {
+      if (inFlightAccountIds.has(acc.id)) {
+        results.push({
+          slotCode: acc.slotCode,
+          status: "SKIPPED_IN_FLIGHT",
+        });
+        continue;
+      }
+
       const decoded = decodeEncryptedSessionBundle(
         acc.encryptedSessionBundle,
         this.encryptionKeyHex
@@ -1499,6 +1520,330 @@ export class InventoryService {
       throw new InventoryError(404, "PLAYER_NOT_FOUND", `Could not find LagosLife player "${cleanQuery}".`);
     }
     return resolved;
+  }
+
+  async createReserveAccount(input: {
+    actorUserId: string;
+    slotCode?: string;
+    lagoslifeUsername?: string;
+    targetReserveAmount?: bigint;
+    reason?: string;
+    ipAddress?: string;
+  }) {
+    const existingAccounts = await this.prisma.gameAccount.findMany({
+      select: { slotCode: true, lagoslifeUsername: true },
+    });
+
+    let slotCode = input.slotCode?.trim().toUpperCase();
+    if (slotCode) {
+      if (!/^RESERVE_[A-Z0-9_]{1,20}$/.test(slotCode)) {
+        throw new InventoryError(
+          400,
+          "INVALID_SLOT_CODE",
+          "Reserve slotCode must match RESERVE_<NAME> (e.g. RESERVE_5)."
+        );
+      }
+      if (existingAccounts.some((a) => a.slotCode === slotCode)) {
+        throw new InventoryError(409, "SLOT_ALREADY_EXISTS", `Slot ${slotCode} already exists.`);
+      }
+    } else {
+      const existingNums = existingAccounts
+        .map((a) => /^RESERVE_(\d+)$/.exec(a.slotCode)?.[1])
+        .filter((n): n is string => Boolean(n))
+        .map((n) => Number(n));
+      const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
+      slotCode = `RESERVE_${nextNum}`;
+    }
+
+    const cleanUsername = input.lagoslifeUsername
+      ? normalizeLagoslifeUsername(input.lagoslifeUsername)
+      : null;
+    if (cleanUsername) {
+      if (cleanUsername.length < 2) {
+        throw new InventoryError(400, "INVALID_USERNAME", "LagosLife username is too short.");
+      }
+      if (
+        existingAccounts.some(
+          (a) => a.lagoslifeUsername && normalizeLagoslifeUsername(a.lagoslifeUsername) === cleanUsername
+        )
+      ) {
+        throw new InventoryError(
+          409,
+          "DUPLICATE_LAGOSLIFE_USERNAME",
+          `LagosLife account @${cleanUsername} is already assigned to another slot.`
+        );
+      }
+    }
+
+    const targetReserveAmount = input.targetReserveAmount ?? 70_000_000_000_000n;
+    if (targetReserveAmount < 0n) {
+      throw new InventoryError(400, "INVALID_TARGET", "Target reserve amount cannot be negative.");
+    }
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const acc = await tx.gameAccount.create({
+        data: {
+          slotCode,
+          accountRole: GameAccountRole.RESERVE,
+          lagoslifeUsername: cleanUsername,
+          targetReserveAmount: targetReserveAmount.toString(),
+          logicalAllocationAmount: "0",
+          lastKnownBalance: "0",
+          reservedForOrders: "0",
+          healthStatus: GameAccountHealth.UNCONFIGURED,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorUserId: input.actorUserId,
+          actionType: "RESERVE_ACCOUNT_CREATED",
+          targetEntity: "game_accounts",
+          targetId: acc.id,
+          afterState: {
+            slotCode: acc.slotCode,
+            lagoslifeUsername: acc.lagoslifeUsername,
+            targetReserveAmount: targetReserveAmount.toString(),
+          },
+          reason: input.reason?.trim() || `Created dynamic reserve slot ${slotCode}`,
+          ipAddress: input.ipAddress ?? null,
+        },
+      });
+
+      return acc;
+    });
+
+    return created;
+  }
+
+  async executeTreasuryToReserveStep(input: {
+    actorUserId: string;
+    targetSlotCode: string;
+    remainingAmount: bigint;
+    refillId: string;
+    stepIndex: number;
+    reason: string;
+    ipAddress?: string;
+    disbursementEnabled?: boolean;
+  }): Promise<{
+    status: "SUCCEEDED" | "COMPLETED" | "AMBIGUOUS_MANUAL_REVIEW" | "RETRY_LATER";
+    chunkAmount: string;
+    remainingAmount: string;
+    nextDelayMs: number | null;
+    error?: string;
+  }> {
+    const enabled = input.disbursementEnabled ?? process.env.DISBURSEMENT_ENABLED === "true";
+    if (!enabled) {
+      throw new InventoryError(
+        409,
+        "DISBURSEMENT_DISABLED",
+        "Live LagosLife transfers are disabled (DISBURSEMENT_ENABLED=false)."
+      );
+    }
+
+    if (input.remainingAmount <= 0n) {
+      return {
+        status: "COMPLETED",
+        chunkAmount: "0",
+        remainingAmount: "0",
+        nextDelayMs: null,
+      };
+    }
+
+    const MAX_CHUNK = 100_000_000_000n; // 100B per transfer
+    const COOLDOWN_MS = 30_500;
+    const chunkAmount = input.remainingAmount > MAX_CHUNK ? MAX_CHUNK : input.remainingAmount;
+
+    const [treasury, target] = await Promise.all([
+      this.prisma.gameAccount.findUnique({ where: { slotCode: "MAIN_TREASURY" } }),
+      this.prisma.gameAccount.findUnique({ where: { slotCode: input.targetSlotCode } }),
+    ]);
+
+    if (!treasury) {
+      throw new InventoryError(404, "TREASURY_NOT_FOUND", "MAIN_TREASURY account not found.");
+    }
+    if (!target || target.accountRole !== GameAccountRole.RESERVE) {
+      throw new InventoryError(404, "RESERVE_NOT_FOUND", `Reserve slot ${input.targetSlotCode} not found.`);
+    }
+    if (treasury.healthStatus !== GameAccountHealth.ACTIVE) {
+      throw new InventoryError(
+        409,
+        "TREASURY_NOT_ACTIVE",
+        `MAIN_TREASURY is ${treasury.healthStatus}; must be ACTIVE to transfer.`
+      );
+    }
+    if (!target.lagoslifeUsername) {
+      throw new InventoryError(
+        409,
+        "RESERVE_USERNAME_MISSING",
+        `${target.slotCode} must have a LagosLife username configured before receiving refills.`
+      );
+    }
+
+    const session = decodeEncryptedSessionBundle(
+      treasury.encryptedSessionBundle,
+      this.encryptionKeyHex
+    );
+    if (!session) {
+      throw new InventoryError(
+        409,
+        "TREASURY_NOT_CONNECTED",
+        "MAIN_TREASURY does not have an active LagosLife session."
+      );
+    }
+
+    if (this.prisma.disbursementChunk) {
+      const inFlight = await this.prisma.disbursementChunk.findFirst({
+        where: {
+          sourceAccountId: { in: [treasury.id, target.id] },
+          status: "IN_FLIGHT",
+        },
+        select: { id: true, sourceAccountId: true },
+      });
+      if (inFlight) {
+        throw new InventoryError(
+          409,
+          "ACCOUNT_IN_FLIGHT",
+          "An active disbursement transfer is currently in-flight on the source or target account."
+        );
+      }
+    }
+
+    const observedTreasury = BigInt(treasury.lastKnownBalance.toFixed(0));
+    const reservedTreasury = BigInt(treasury.reservedForOrders.toFixed(0));
+    const availableTreasury = observedTreasury > reservedTreasury ? observedTreasury - reservedTreasury : 0n;
+    if (availableTreasury < chunkAmount) {
+      throw new InventoryError(
+        409,
+        "INSUFFICIENT_TREASURY_BALANCE",
+        `MAIN_TREASURY available balance (${availableTreasury.toString()}) is less than ${chunkAmount.toString()}.`
+      );
+    }
+
+    const resolvedTarget = await this.lagosLifeAdapter.resolveTargetIdAsync(
+      normalizeLagoslifeUsername(target.lagoslifeUsername),
+      session.cookie
+    );
+    if (!resolvedTarget?.id) {
+      throw new InventoryError(
+        409,
+        "RESERVE_TARGET_UNRESOLVED",
+        `Could not resolve @${target.lagoslifeUsername} on LagosLife.`
+      );
+    }
+
+    const sendResult = await this.lagosLifeAdapter.sendCurrencyChunk({
+      cookie: session.cookie,
+      targetId: resolvedTarget.id,
+      amount: chunkAmount,
+      idempotencyKey: `refill_${input.refillId}_${input.stepIndex}`,
+      pin: session.transactionPin ?? undefined,
+    });
+
+    if (sendResult.outcome === "SUCCEEDED") {
+      const nextRemaining = input.remainingAmount - chunkAmount;
+      await this.prisma.$transaction(async (tx) => {
+        const lockedTreasury = await tx.gameAccount.findUniqueOrThrow({ where: { id: treasury.id } });
+        const lockedTarget = await tx.gameAccount.findUniqueOrThrow({ where: { id: target.id } });
+
+        const tBal = BigInt(lockedTreasury.lastKnownBalance.toFixed(0));
+        const nextTBal = tBal >= chunkAmount ? tBal - chunkAmount : 0n;
+        const rBal = BigInt(lockedTarget.lastKnownBalance.toFixed(0));
+        const nextRBal = rBal + chunkAmount;
+
+        await tx.gameAccount.update({
+          where: { id: treasury.id },
+          data: { lastKnownBalance: nextTBal.toString(), lastSyncedAt: new Date() },
+        });
+        await tx.gameAccount.update({
+          where: { id: target.id },
+          data: { lastKnownBalance: nextRBal.toString(), lastSyncedAt: new Date() },
+        });
+
+        await tx.inventoryLedger.create({
+          data: {
+            gameAccountId: treasury.id,
+            entryType: InventoryEntryType.TREASURY_TO_RESERVE,
+            deltaAmount: (-chunkAmount).toString(),
+            balanceAfter: nextTBal.toString(),
+            createdById: input.actorUserId,
+            notes: `Treasury -> ${target.slotCode} refill (${input.refillId} #${input.stepIndex}): ${input.reason}`,
+          },
+        });
+        await tx.inventoryLedger.create({
+          data: {
+            gameAccountId: target.id,
+            entryType: InventoryEntryType.TREASURY_TO_RESERVE,
+            deltaAmount: chunkAmount.toString(),
+            balanceAfter: nextRBal.toString(),
+            createdById: input.actorUserId,
+            notes: `Refill from MAIN_TREASURY (${input.refillId} #${input.stepIndex}): ${input.reason}`,
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            actorUserId: input.actorUserId,
+            actionType: "TREASURY_TO_RESERVE_CHUNK_SUCCEEDED",
+            targetEntity: "game_accounts",
+            targetId: target.id,
+            afterState: {
+              refillId: input.refillId,
+              stepIndex: input.stepIndex,
+              sourceSlot: "MAIN_TREASURY",
+              targetSlot: target.slotCode,
+              chunkAmount: chunkAmount.toString(),
+              remainingAmount: nextRemaining.toString(),
+            },
+            reason: input.reason,
+            ipAddress: input.ipAddress ?? null,
+          },
+        });
+      });
+
+      return {
+        status: nextRemaining > 0n ? "SUCCEEDED" : "COMPLETED",
+        chunkAmount: chunkAmount.toString(),
+        remainingAmount: nextRemaining.toString(),
+        nextDelayMs: nextRemaining > 0n ? COOLDOWN_MS : null,
+      };
+    }
+
+    if (sendResult.outcome === "RATE_LIMITED") {
+      return {
+        status: "RETRY_LATER",
+        chunkAmount: "0",
+        remainingAmount: input.remainingAmount.toString(),
+        nextDelayMs: sendResult.retryAfterMs ?? COOLDOWN_MS,
+        error: sendResult.message ?? `HTTP ${sendResult.status}`,
+      };
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorUserId: input.actorUserId,
+        actionType: "TREASURY_TO_RESERVE_AMBIGUOUS",
+        targetEntity: "game_accounts",
+        targetId: target.id,
+        afterState: {
+          refillId: input.refillId,
+          stepIndex: input.stepIndex,
+          outcome: sendResult.outcome,
+          httpStatus: sendResult.status,
+          error: sendResult.message ?? null,
+        },
+        reason: input.reason,
+        ipAddress: input.ipAddress ?? null,
+      },
+    });
+
+    return {
+      status: "AMBIGUOUS_MANUAL_REVIEW",
+      chunkAmount: "0",
+      remainingAmount: input.remainingAmount.toString(),
+      nextDelayMs: null,
+      error: sendResult.message ?? `Transfer outcome uncertain (${sendResult.outcome}). Verify balances manually before retrying.`,
+    };
   }
 }
 

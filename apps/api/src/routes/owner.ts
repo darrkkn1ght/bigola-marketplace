@@ -126,6 +126,7 @@ const updateBusinessSettingsSchema = z.object({
   bulkOrdersEnabled: z.boolean(),
   maintenanceMessage: z.string().max(400).nullable().optional(),
   customerAvailabilityNote: z.string().max(400).nullable().optional(),
+  whatsappNumber: z.string().min(7).max(30).nullable().optional(),
   reason: z.string().min(3).max(500),
 });
 
@@ -731,6 +732,10 @@ export function registerOwnerRoutes(
           typeof raw.customerAvailabilityNote === "string" && raw.customerAvailabilityNote.trim()
             ? raw.customerAvailabilityNote.trim()
             : null,
+        whatsappNumber:
+          typeof raw.whatsappNumber === "string" && raw.whatsappNumber.trim()
+            ? raw.whatsappNumber.trim()
+            : null,
       },
     });
   });
@@ -751,6 +756,7 @@ export function registerOwnerRoutes(
         bulkOrdersEnabled: parsed.data.bulkOrdersEnabled,
         maintenanceMessage: parsed.data.maintenanceMessage?.trim() || null,
         customerAvailabilityNote: parsed.data.customerAvailabilityNote?.trim() || null,
+        whatsappNumber: parsed.data.whatsappNumber?.trim() || null,
       };
       const before =
         (await deps.platformStore.getSettings()).find((s) => s.key === "business_settings") ?? null;
@@ -1023,6 +1029,135 @@ export function registerOwnerRoutes(
             logicalAllocationAmount: account.logicalAllocationAmount.toFixed(0),
             observedBalance: account.lastKnownBalance.toFixed(0),
           },
+        });
+      } catch (err) {
+        if (err instanceof InventoryError) {
+          return reply.code(err.statusCode).send({ code: err.code, error: err.message });
+        }
+        throw err;
+      }
+    }
+  );
+
+  app.post(
+    "/api/v1/owner/inventory/accounts",
+    { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_ACCOUNT_TOPOLOGY_MANAGE)] },
+    async (request, reply) => {
+      const inventoryService = getInvSvc();
+      if (!inventoryService) {
+        return reply.code(503).send({ error: "Inventory service unavailable." });
+      }
+      const createReserveSchema = z.object({
+        slotCode: z.string().min(3).max(32).optional(),
+        lagoslifeUsername: z.string().min(2).max(60).optional(),
+        targetReserveAmount: z.string().regex(/^\d+$/).optional(),
+        reason: z.string().min(3).max(500).optional(),
+      });
+      const parsed = createReserveSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Invalid reserve account payload.", issues: parsed.error.issues });
+      }
+      try {
+        const account = await inventoryService.createReserveAccount({
+          actorUserId: request.auth!.userId,
+          slotCode: parsed.data.slotCode,
+          lagoslifeUsername: parsed.data.lagoslifeUsername,
+          targetReserveAmount: parsed.data.targetReserveAmount
+            ? BigInt(parsed.data.targetReserveAmount)
+            : undefined,
+          reason: parsed.data.reason,
+          ipAddress: request.ip,
+        });
+        return reply.code(201).send({
+          account: {
+            id: account.id,
+            slotCode: account.slotCode,
+            lagoslifeUsername: account.lagoslifeUsername,
+            accountRole: account.accountRole,
+            healthStatus: account.healthStatus,
+            targetReserveAmount: account.targetReserveAmount.toFixed(0),
+          },
+        });
+      } catch (err) {
+        if (err instanceof InventoryError) {
+          return reply.code(err.statusCode).send({ code: err.code, error: err.message });
+        }
+        throw err;
+      }
+    }
+  );
+
+  app.post(
+    "/api/v1/owner/inventory/refill-reserve",
+    { preHandler: [deps.authenticate, deps.requirePermission(Permission.OWNER_ACCOUNT_TOPOLOGY_MANAGE)] },
+    async (request, reply) => {
+      const inventoryService = getInvSvc();
+      if (!inventoryService) {
+        return reply.code(503).send({ error: "Inventory service unavailable." });
+      }
+      const refillSchema = z.object({
+        targetSlotCode: z.string().min(3).max(32),
+        amount: z.string().regex(/^\d+$/),
+        confirmTransfer: z.literal(true),
+        reason: z.string().min(3).max(500),
+      });
+      const parsed = refillSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "Invalid refill payload. Explicit confirmation, targetSlotCode, amount, and reason are required.",
+          issues: parsed.error.issues,
+        });
+      }
+      const amountBig = BigInt(parsed.data.amount);
+      if (amountBig <= 0n) {
+        return reply.code(400).send({ error: "Refill amount must be positive." });
+      }
+
+      const refillId = crypto.randomUUID().slice(0, 12);
+      try {
+        const stepResult = await inventoryService.executeTreasuryToReserveStep({
+          actorUserId: request.auth!.userId,
+          targetSlotCode: parsed.data.targetSlotCode,
+          remainingAmount: amountBig,
+          refillId,
+          stepIndex: 1,
+          reason: parsed.data.reason,
+          ipAddress: request.ip,
+        });
+
+        let queuedRemaining = false;
+        if (
+          stepResult.nextDelayMs !== null &&
+          BigInt(stepResult.remainingAmount) > 0n &&
+          deps.queues?.inventorySyncQueue
+        ) {
+          await deps.queues.inventorySyncQueue.add(
+            "treasury-refill",
+            {
+              actorUserId: request.auth!.userId,
+              targetSlotCode: parsed.data.targetSlotCode,
+              remainingAmount: stepResult.remainingAmount,
+              refillId,
+              stepIndex: 2,
+              reason: parsed.data.reason,
+              ipAddress: request.ip,
+            },
+            {
+              jobId: `treasury_refill_${refillId}_2`,
+              delay: stepResult.nextDelayMs,
+              attempts: 1,
+            }
+          );
+          queuedRemaining = true;
+        }
+
+        return reply.code(200).send({
+          refillId,
+          status: stepResult.status,
+          chunkAmount: stepResult.chunkAmount,
+          remainingAmount: stepResult.remainingAmount,
+          queuedRemaining,
+          error: stepResult.error ?? null,
         });
       } catch (err) {
         if (err instanceof InventoryError) {
@@ -2432,6 +2567,168 @@ export function registerOwnerRoutes(
         disbursementEnabled: disbSvc.isDisbursementEnabled(),
         jobs,
       });
+    }
+  );
+
+  app.post(
+    "/api/v1/owner/orders/:orderId/confirm-and-deliver",
+    {
+      preHandler: [
+        deps.authenticate,
+        deps.requirePermission(Permission.ORDER_FULFILMENT_CONFIRM),
+      ],
+    },
+    async (request, reply) => {
+      if (!deps.prisma) {
+        return reply.code(503).send({ error: "Database unavailable." });
+      }
+      const disbSvc = await getDisbSvc();
+      if (!disbSvc) {
+        return reply.code(503).send({ error: "Disbursement service unavailable." });
+      }
+      const confirmSchema = z.object({
+        receivingBankAccountId: z.string().uuid().optional(),
+        bankCreditReference: z.string().min(3).max(120),
+        bankCreditAmountKobo: z.string().regex(/^\d+$/).optional(),
+        allowExcessResolution: z.boolean().optional(),
+        reason: z.string().min(3).max(500).optional(),
+      });
+      const parsed = confirmSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "Invalid confirmation payload. A valid bank/OPay transaction reference is required.",
+          issues: parsed.error.issues,
+        });
+      }
+
+      const { orderId } = request.params as { orderId: string };
+      const order = await deps.prisma.order.findUnique({
+        where: { id: orderId },
+        select: { id: true, status: true, fiatAmountKobo: true, orderNumber: true },
+      });
+      if (!order) {
+        return reply.code(404).send({ error: "Order not found." });
+      }
+
+      const alreadyVerifiedStatuses: string[] = [
+        "READY_FOR_FULFILMENT",
+        "QUEUED",
+        "DISBURSING",
+        "PARTIALLY_FULFILLED",
+        "COMPLETED",
+      ];
+      if (alreadyVerifiedStatuses.includes(order.status)) {
+        const existingJobs = await disbSvc.getOrderDisbursementJobs(orderId);
+        if (order.status === "READY_FOR_FULFILMENT" && existingJobs.length === 0) {
+          const job = await disbSvc.authorizeDisbursementJob({
+            orderId,
+            actorUserId: request.auth!.userId,
+            actorRole: request.auth!.role,
+            authorizationNote:
+              parsed.data.reason?.trim() || "Owner confirmed payment and started automated delivery",
+            ipAddress: request.ip,
+          });
+          return reply.code(200).send({
+            idempotent: true,
+            orderStatus: "QUEUED",
+            disbursementEnabled: disbSvc.isDisbursementEnabled(),
+            job,
+          });
+        }
+        return reply.code(200).send({
+          idempotent: true,
+          orderStatus: order.status,
+          disbursementEnabled: disbSvc.isDisbursementEnabled(),
+          job: existingJobs[0] ?? null,
+        });
+      }
+
+      let receivingBankAccountId = parsed.data.receivingBankAccountId;
+      if (!receivingBankAccountId) {
+        const defaultAccount = await deps.prisma.receivingBankAccount.findFirst({
+          where: { isActive: true },
+          orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+          select: { id: true },
+        });
+        if (!defaultAccount) {
+          return reply.code(409).send({
+            code: "NO_ACTIVE_RECEIVING_ACCOUNT",
+            error: "No active receiving bank account is configured.",
+          });
+        }
+        receivingBankAccountId = defaultAccount.id;
+      }
+
+      const { CommissionService } = await import("../services/commission.js");
+      const { NotificationService } = await import("../services/notification.js");
+      const { VerificationError, VerificationService } = await import("../services/verification.js");
+      const { DisbursementError } = await import("../services/disbursement.js");
+
+      const verificationSvc = new VerificationService(
+        deps.prisma,
+        new CommissionService(deps.prisma),
+        new NotificationService(deps.prisma)
+      );
+
+      try {
+        await verificationSvc.assertAuthorizedVerifier(request.auth!.userId, request.auth!.role);
+        const reasonText =
+          parsed.data.reason && parsed.data.reason.trim().length >= 10
+            ? parsed.data.reason.trim()
+            : `Owner confirmed payment (${parsed.data.bankCreditReference.trim()}) and started delivery`;
+
+        const verificationResult = await verificationSvc.approveOrderPayment({
+          orderId,
+          verifierUserId: request.auth!.userId,
+          verifierRole: request.auth!.role,
+          receivingBankAccountId,
+          manualVerificationException: true,
+          allowAwaitingPayment: true,
+          bankCreditConfirmed: true,
+          bankCreditReference: parsed.data.bankCreditReference.trim(),
+          bankCreditAmountKobo: parsed.data.bankCreditAmountKobo
+            ? BigInt(parsed.data.bankCreditAmountKobo)
+            : order.fiatAmountKobo,
+          allowExcessResolution: parsed.data.allowExcessResolution,
+          reason: reasonText,
+          ipAddress: request.ip,
+        });
+
+        if (verificationResult.order.status !== "READY_FOR_FULFILMENT") {
+          return reply.code(200).send({
+            idempotent: false,
+            decisionId: verificationResult.decision.id,
+            orderStatus: verificationResult.order.status,
+            paymentExceptionType: verificationResult.order.paymentExceptionType,
+            disbursementEnabled: disbSvc.isDisbursementEnabled(),
+            job: null,
+          });
+        }
+
+        const job = await disbSvc.authorizeDisbursementJob({
+          orderId,
+          actorUserId: request.auth!.userId,
+          actorRole: request.auth!.role,
+          authorizationNote: reasonText,
+          ipAddress: request.ip,
+        });
+
+        return reply.code(200).send({
+          idempotent: false,
+          decisionId: verificationResult.decision.id,
+          orderStatus: "QUEUED",
+          disbursementEnabled: disbSvc.isDisbursementEnabled(),
+          job,
+        });
+      } catch (err) {
+        if (err instanceof VerificationError) {
+          return reply.code(err.statusCode).send({ code: err.code, error: err.message });
+        }
+        if (err instanceof DisbursementError) {
+          return reply.code(err.statusCode).send({ code: err.code, error: err.message });
+        }
+        throw err;
+      }
     }
   );
 

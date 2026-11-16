@@ -61,6 +61,33 @@ export const DEFAULT_INVENTORY_MAX_AGE_MINUTES = 60;
 export const DEFAULT_MAX_ACTIVE_UNPAID_ORDERS_PER_CUSTOMER = 3;
 export const DEFAULT_MAX_RESERVED_GAME_AMOUNT_PER_CUSTOMER = 500_000_000_000_000n; // 500 Trillion
 
+export function buildWhatsAppReceiptUrl(
+  rawNumber: string | null | undefined,
+  details: {
+    orderNumber: string;
+    paymentReference: string;
+    amountDueNaira: string;
+    gameAmountLabel: string;
+    recipientUsername: string;
+  }
+): string | null {
+  if (!rawNumber) return null;
+  const digits = rawNumber.replace(/\D/g, "");
+  if (!digits) return null;
+  const normalized =
+    digits.startsWith("0") && digits.length === 11 ? `234${digits.slice(1)}` : digits;
+  const text = [
+    `Hello Big Ola Marketplace, I have sent payment for my order:`,
+    `Order ID: ${details.orderNumber}`,
+    `Payment Reference: ${details.paymentReference}`,
+    `Amount Paid: ${details.amountDueNaira}`,
+    `Currency: ${details.gameAmountLabel}`,
+    `LagosLife Username: @${details.recipientUsername}`,
+    `Please find my payment receipt attached.`,
+  ].join("\n");
+  return `https://wa.me/${normalized}?text=${encodeURIComponent(text)}`;
+}
+
 export interface BulkTierConfig {
   minGameAmount: string; // integer string in-game Naira
   priceKoboPerTrillion: string; // integer string kobo

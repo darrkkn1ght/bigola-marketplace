@@ -506,17 +506,29 @@ export class VerificationService {
       throw new VerificationError(404, "ORDER_NOT_FOUND", "Order not found.");
     }
 
-    const accounts = await this.prisma.receivingBankAccount.findMany({
-      where: { isActive: true },
-      orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
-      select: {
-        id: true,
-        bankName: true,
-        accountNumber: true,
-        accountName: true,
-        isDefault: true,
-      },
-    });
+    const [accounts, businessSetting] = await Promise.all([
+      this.prisma.receivingBankAccount.findMany({
+        where: { isActive: true },
+        orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+        select: {
+          id: true,
+          bankName: true,
+          accountNumber: true,
+          accountName: true,
+          isDefault: true,
+        },
+      }),
+      this.prisma.platformSetting.findUnique({
+        where: { key: "business_settings" },
+        select: { value: true },
+      }),
+    ]);
+
+    const businessVal = (businessSetting?.value ?? {}) as Record<string, unknown>;
+    const whatsappNumber =
+      typeof businessVal.whatsappNumber === "string" && businessVal.whatsappNumber.trim()
+        ? businessVal.whatsappNumber.trim()
+        : null;
 
     return {
       orderId: order.id,
@@ -526,6 +538,7 @@ export class VerificationService {
       verifiedGrossFiatKobo: order.verifiedGrossFiatKobo.toString(),
       status: order.status,
       expiresAt: order.expiresAt?.toISOString() ?? null,
+      whatsappNumber,
       receivingAccounts: accounts,
     };
   }
@@ -901,6 +914,7 @@ export class VerificationService {
     bankCreditAmountKobo?: bigint;
     bankCreditTimestamp?: string;
     allowExcessResolution?: boolean;
+    allowAwaitingPayment?: boolean;
     reason: string;
     ipAddress?: string;
   }) {
@@ -954,10 +968,12 @@ export class VerificationService {
             throw new VerificationError(404, "ORDER_NOT_FOUND", "Order not found.");
           }
 
-          if (
-            order.status !== OrderStatus.PAYMENT_SUBMITTED &&
-            order.status !== OrderStatus.PAYMENT_EXCEPTION_REVIEW
-          ) {
+          const allowedStatuses: OrderStatus[] = [
+            OrderStatus.PAYMENT_SUBMITTED,
+            OrderStatus.PAYMENT_EXCEPTION_REVIEW,
+            ...(input.allowAwaitingPayment ? [OrderStatus.AWAITING_PAYMENT] : []),
+          ];
+          if (!allowedStatuses.includes(order.status)) {
             throw new VerificationError(
               409,
               "INVALID_ORDER_STATE",

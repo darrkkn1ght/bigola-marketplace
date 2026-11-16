@@ -82,21 +82,42 @@ export class AttributionService {
     }
 
     const effectiveCode = cookieCode ?? bodyCode;
+    if (!effectiveCode) {
+      throw new AttributionError(
+        400,
+        "REFERRAL_CODE_REQUIRED",
+        "A valid partner referral code is required to register."
+      );
+    }
+
     const attributionSource = cookieCode
       ? AttributionSource.REF_LINK
-      : bodyCode
-        ? AttributionSource.REF_CODE
-        : null;
+      : AttributionSource.REF_CODE;
 
-    let partner: { id: string; referralCode: string; status: PartnerStatus } | null = null;
-    if (effectiveCode) {
-      partner = await this.prisma.partner.findUnique({
-        where: { referralCode: effectiveCode },
-        select: { id: true, referralCode: true, status: true },
-      });
-      if (!partner || partner.status !== PartnerStatus.ACTIVE) {
-        throw new AttributionError(400, "INVALID_REFERRAL_CODE", "Referral code is invalid or inactive.");
-      }
+    const partner = await this.prisma.partner.findUnique({
+      where: { referralCode: effectiveCode },
+      select: {
+        id: true,
+        referralCode: true,
+        status: true,
+        user: { select: { email: true, phone: true } },
+      },
+    });
+    if (!partner || partner.status !== PartnerStatus.ACTIVE) {
+      throw new AttributionError(400, "INVALID_REFERRAL_CODE", "Referral code is invalid or inactive.");
+    }
+
+    const partnerEmail = partner.user?.email ? normalizeEmail(partner.user.email) : null;
+    const partnerPhone = partner.user?.phone ? normalizePhone(partner.user.phone) : null;
+    if (
+      (partnerEmail && partnerEmail === normalizedEmail) ||
+      (normalizedPhone && partnerPhone && partnerPhone === normalizedPhone)
+    ) {
+      throw new AttributionError(
+        400,
+        "SELF_REFERRAL_NOT_ALLOWED",
+        "You cannot register using your own partner referral code."
+      );
     }
 
     const passwordHash = await hashPassword(input.password);

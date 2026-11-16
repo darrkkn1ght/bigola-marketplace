@@ -180,8 +180,8 @@ describe("Phase 3 Attribution & Commission Integrity (Neon PostgreSQL)", { skip:
       createdUserIds.push(cust1Reg.json().id);
       createdCustomerIds.push(cust1Reg.json().customer.id);
 
-      // 6. Register Customer 2 without referral -> Category B
-      const cust2Reg = await app.inject({
+      // 6. Public registration without referral is rejected; create legacy Category B customer directly for commission test
+      const cust2Rejected = await app.inject({
         method: "POST",
         url: "/api/v1/auth/register",
         payload: {
@@ -190,11 +190,27 @@ describe("Phase 3 Attribution & Commission Integrity (Neon PostgreSQL)", { skip:
           fullName: "Category B Direct",
         },
       });
-      assert.equal(cust2Reg.statusCode, 201);
-      assert.equal(cust2Reg.json().customer.category, CustomerCategory.CATEGORY_B_BIGOLA);
-      assert.equal(cust2Reg.json().customer.attributedPartnerId, null);
-      createdUserIds.push(cust2Reg.json().id);
-      createdCustomerIds.push(cust2Reg.json().customer.id);
+      assert.equal(cust2Rejected.statusCode, 400);
+      assert.equal(cust2Rejected.json().code, "REFERRAL_CODE_REQUIRED");
+
+      const cust2User = await prisma.user.create({
+        data: {
+          email: `p3_cust2_${ts}@example.com`,
+          passwordHash: await hashPassword("CustPass#2026"),
+          role: UserRole.CUSTOMER,
+        },
+      });
+      const cust2Record = await prisma.customer.create({
+        data: {
+          userId: cust2User.id,
+          fullName: "Category B Direct",
+          email: cust2User.email,
+          category: CustomerCategory.CATEGORY_B_BIGOLA,
+          attributedPartnerId: null,
+        },
+      });
+      createdUserIds.push(cust2User.id);
+      createdCustomerIds.push(cust2Record.id);
 
       // 7. Partner B registers offline customer; Partner A tries same phone -> 409 conflict (masked, no overwrite)
       const pALogin = await app.inject({
@@ -318,7 +334,7 @@ describe("Phase 3 Attribution & Commission Integrity (Neon PostgreSQL)", { skip:
         data: {
           orderNumber: `ORD-CATB-${ts}`,
           paymentReference: `BGO-CATB-${ts}`,
-          customerId: cust2Reg.json().customer.id,
+          customerId: cust2Record.id,
           customerCategory: CustomerCategory.CATEGORY_B_BIGOLA,
           partnerId: null,
           recipientLagoslifeUsername: `catb_${ts}`,

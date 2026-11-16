@@ -112,15 +112,24 @@ export default function MarketplacePage() {
   const minTrillions = bulk
     ? Number(BigInt(bulk.minBulkGameAmount) / ONE_TRILLION)
     : 1;
+  const maxTrillions = bulk?.maxBulkGameAmount
+    ? Number(BigInt(bulk.maxBulkGameAmount) / ONE_TRILLION)
+    : null;
   const pricePerT = bulk ? BigInt(bulk.priceKoboPerTrillion) : 100_000n;
   const restocking = catalog?.restockingSchedule ?? getRestockingScheduleStatus();
   const isRestockingClosed = restocking.isRestockingDay;
   const salesEnabled = catalog?.businessSettings?.marketplaceSalesEnabled !== false && !isRestockingClosed;
   const bulkEnabled = salesEnabled && bulk?.enabled !== false;
   const hasAvailableStock = isFresh && BigInt(reservableAvailable) > 0n;
+  const exceedsMaxLimit = maxTrillions !== null && trillions > maxTrillions;
+  const exceedsAvailableStock =
+    hasAvailableStock &&
+    Number.isInteger(trillions) &&
+    trillions > 0 &&
+    BigInt(trillions) * ONE_TRILLION > BigInt(reservableAvailable);
   let totalKobo = 0n;
   let validQuantity = false;
-  if (Number.isInteger(trillions) && trillions >= minTrillions) {
+  if (Number.isInteger(trillions) && trillions >= minTrillions && !exceedsMaxLimit) {
     try {
       const q = calculateBulkOrderQuote(BigInt(trillions) * ONE_TRILLION, {
         priceKoboPerTrillion: pricePerT,
@@ -176,7 +185,15 @@ export default function MarketplacePage() {
   async function handlePlaceOrder(e: React.FormEvent) {
     e.preventDefault();
     if (!validQuantity) {
-      setError(`Minimum bulk order is ${minTrillions}T in 1T increments.`);
+      setError(
+        exceedsMaxLimit && maxTrillions !== null
+          ? `Maximum bulk order is ${maxTrillions}T.`
+          : `Minimum bulk order is ${minTrillions}T in 1T increments.`
+      );
+      return;
+    }
+    if (exceedsAvailableStock) {
+      setError(`Only ${formatTrillions(reservableAvailable)} is currently available in verified stock.`);
       return;
     }
     setSubmitting(true);
@@ -282,7 +299,7 @@ export default function MarketplacePage() {
             <div className="xl:col-span-7 min-w-0 space-y-6">
               <Card
                 title="Bulk Currency Calculator"
-                subtitle={`Rate: ${formatNaira(pricePerT)} per 1T • Minimum ${minTrillions}T • 1T increments`}
+                subtitle={`Rate: ${formatNaira(pricePerT)} per 1T • Min ${minTrillions}T${maxTrillions !== null ? ` • Max ${maxTrillions}T` : ""} • 1T increments`}
               >
                 <form onSubmit={handlePlaceOrder} className="space-y-5">
                   <div>
@@ -335,6 +352,7 @@ export default function MarketplacePage() {
                       <input
                         type="number"
                         min={minTrillions}
+                        max={maxTrillions ?? undefined}
                         step={1}
                         required
                         className="h-11 w-full rounded-lg border border-slate-300 bg-white px-3.5 font-mono-tabular text-base font-semibold text-[#0B1324] focus:border-[#059669] focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
@@ -343,7 +361,12 @@ export default function MarketplacePage() {
                       />
                       <button
                         type="button"
-                        onClick={() => setTrillions((prev) => (prev || minTrillions) + 1)}
+                        onClick={() =>
+                          setTrillions((prev) => {
+                            const next = (prev || minTrillions) + 1;
+                            return maxTrillions !== null ? Math.min(maxTrillions, next) : next;
+                          })
+                        }
                         className="h-11 w-11 shrink-0 rounded-lg border border-slate-300 bg-white text-base font-bold text-[#0B1324] hover:bg-slate-50 cursor-pointer"
                         aria-label="Increase quantity"
                       >
@@ -352,7 +375,14 @@ export default function MarketplacePage() {
                     </div>
                     {!validQuantity && (
                       <p className="mt-1.5 text-xs font-medium text-red-600">
-                        Please enter a whole number of at least {minTrillions}T.
+                        {exceedsMaxLimit && maxTrillions !== null
+                          ? `Maximum order limit is ${maxTrillions}T.`
+                          : `Please enter a whole number of at least ${minTrillions}T.`}
+                      </p>
+                    )}
+                    {validQuantity && exceedsAvailableStock && (
+                      <p className="mt-1.5 text-xs font-medium text-amber-700">
+                        Requested amount exceeds currently available stock ({formatTrillions(reservableAvailable)}).
                       </p>
                     )}
                   </div>

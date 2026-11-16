@@ -2,6 +2,7 @@ import { loadEnv } from "./config/env.js";
 import { prisma } from "./lib/prisma.js";
 import { createBullMqWorker, createQueueInfrastructure } from "./lib/redis.js";
 import { DisbursementService } from "./services/disbursement.js";
+import { InventoryService } from "./services/inventory.js";
 import { LagosLifeAdapter } from "./services/lagoslife.js";
 import { OrderService } from "./services/order.js";
 
@@ -36,6 +37,10 @@ async function startWorker() {
     }
   );
   const orderService = new OrderService(prisma);
+  const inventoryService = new InventoryService(prisma, {
+    encryptionKeyHex: env.ENCRYPTION_KEY_HEX,
+    lagosLifeAdapter: adapter,
+  });
 
   // Startup crash recovery:
   // 1. Move any stale IN_FLIGHT chunks to AMBIGUOUS_MANUAL_REVIEW (never blindly retry).
@@ -175,6 +180,91 @@ async function startWorker() {
     }
   );
 
+  const inventorySyncWorker = createBullMqWorker(
+    "inventory-sync",
+    env.REDIS_URL,
+    env.QUEUE_PREFIX,
+    async (job) => {
+      if (job.name === "treasury-refill") {
+        const data = (job.data ?? {}) as {
+          actorUserId: string;
+          targetSlotCode: string;
+          remainingAmount: string;
+          refillId: string;
+          stepIndex: number;
+          reason: string;
+          ipAddress?: string;
+        };
+        const step = await inventoryService.executeTreasuryToReserveStep({
+          actorUserId: data.actorUserId,
+          targetSlotCode: data.targetSlotCode,
+          remainingAmount: BigInt(data.remainingAmount || "0"),
+          refillId: data.refillId,
+          stepIndex: data.stepIndex,
+          reason: data.reason,
+          ipAddress: data.ipAddress,
+          disbursementEnabled: env.DISBURSEMENT_ENABLED,
+        });
+        if (
+          step.nextDelayMs !== null &&
+          BigInt(step.remainingAmount) > 0n &&
+          queues.inventorySyncQueue
+        ) {
+          const nextStep = data.stepIndex + 1;
+          await queues.inventorySyncQueue.add(
+            "treasury-refill",
+            {
+              ...data,
+              remainingAmount: step.remainingAmount,
+              stepIndex: nextStep,
+            },
+            {
+              jobId: `treasury_refill_${data.refillId}_${nextStep}`,
+              delay: step.nextDelayMs,
+              attempts: 1,
+            }
+          );
+        }
+        return step;
+      }
+
+      const lockKey = `${env.QUEUE_PREFIX}:inventory_sync:lock`;
+      const acquired = queues.redis
+        ? await queues.redis.set(lockKey, job.id ?? "1", "PX", 120_000, "NX")
+        : "OK";
+      if (!acquired) {
+        return { skipped: true, reason: "SYNC_LOCK_HELD" };
+      }
+      try {
+        const owner = await prisma.user.findFirst({
+          where: { role: "OWNER", isActive: true },
+          orderBy: { createdAt: "asc" },
+          select: { id: true },
+        });
+        if (!owner) {
+          return { skipped: true, reason: "NO_ACTIVE_OWNER" };
+        }
+        const syncResult = await inventoryService.syncAllLiveBalances({
+          actorUserId: owner.id,
+          skipInFlight: true,
+        });
+        return {
+          ok: true,
+          syncedAt: new Date().toISOString(),
+          results: syncResult.results.map((r) => ({
+            slotCode: r.slotCode,
+            status: r.status,
+          })),
+        };
+      } finally {
+        if (queues.redis) {
+          await queues.redis.del(lockKey).catch(() => undefined);
+        }
+      }
+    },
+    { concurrency: 1, lockDuration: 120_000 }
+  );
+
   disbursementWorker.on("failed", (job, err) => {
     console.error(`[disbursement-chunks] job ${job?.id} failed:`, err);
   });
@@ -186,6 +276,35 @@ async function startWorker() {
   expiryWorker.on("failed", (job, err) => {
     console.error(`[order-expiry] job ${job?.id} failed:`, err);
   });
+
+  inventorySyncWorker.on("failed", (job, err) => {
+    console.error(`[inventory-sync] job ${job?.id} failed:`, err);
+  });
+
+  if (queues.inventorySyncQueue) {
+    const syncIntervalMinutes = Math.max(
+      5,
+      Math.min(60, Number(process.env.INVENTORY_SYNC_INTERVAL_MINUTES ?? 15) || 15)
+    );
+    await queues.inventorySyncQueue.add(
+      "periodic-inventory-sync",
+      {},
+      {
+        jobId: "periodic-inventory-sync",
+        repeat: { every: syncIntervalMinutes * 60_000 },
+        attempts: 1,
+      }
+    );
+    await queues.inventorySyncQueue.add(
+      "startup-inventory-sync",
+      {},
+      {
+        jobId: "startup-inventory-sync",
+        delay: 10_000,
+        attempts: 1,
+      }
+    );
+  }
 
   const syncWorkerControlAndHeartbeat = async () => {
     const control = await queues.getWorkerControl();
@@ -216,7 +335,7 @@ async function startWorker() {
     JSON.stringify({
       event: "worker_started",
       service: "bigola-marketplace-worker",
-      queues: ["disbursement-chunks", "infra-health", "order-expiry"],
+      queues: ["disbursement-chunks", "infra-health", "order-expiry", "inventory-sync"],
       concurrency: 5,
       disbursementEnabled: env.DISBURSEMENT_ENABLED,
       recoveredRunningJobs: recovery.resumableRunningJobIds.length,
@@ -233,6 +352,7 @@ async function startWorker() {
       disbursementWorker.close(),
       infraWorker.close(),
       expiryWorker.close(),
+      inventorySyncWorker.close(),
       queues.close(),
       prisma.$disconnect(),
     ]);

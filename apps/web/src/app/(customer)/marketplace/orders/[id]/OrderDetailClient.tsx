@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { buildWhatsAppReceiptUrl } from "@bigola/shared";
 import { CustomerShell } from "@/components/CustomerShell";
 import { Card } from "@/components/ui/Card";
 import { Button, CopyButton } from "@/components/ui/Button";
@@ -47,6 +48,7 @@ interface PaymentInstructionsResponse {
   verifiedGrossFiatKobo: string;
   status: string;
   expiresAt: string | null;
+  whatsappNumber?: string | null;
   receivingAccounts: ReceivingBankAccountOption[];
 }
 
@@ -552,7 +554,45 @@ export default function OrderDetailClient() {
                 </div>
               )}
 
+              {(() => {
+                const whatsappHref = buildWhatsAppReceiptUrl(instructions?.whatsappNumber, {
+                  orderNumber: order.orderNumber,
+                  paymentReference: order.paymentReference,
+                  amountDueNaira: formatNaira(order.fiatAmountKobo),
+                  gameAmountLabel: formatGameCurrency(requestedUnits),
+                  recipientUsername: order.recipientLagoslifeUsername,
+                });
+                if (!whatsappHref) {
+                  return (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900">
+                      Send your transfer receipt on WhatsApp or submit your bank transfer reference below so we can confirm payment and start delivery.
+                    </div>
+                  );
+                }
+                return (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 space-y-2.5">
+                    <div className="text-xs font-semibold text-emerald-950">
+                      Step 2: Send your OPay transfer receipt on WhatsApp for fast confirmation
+                    </div>
+                    <a
+                      href={whatsappHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex w-full items-center justify-center rounded-xl bg-[#059669] px-5 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-[#047857]"
+                    >
+                      SEND PAYMENT RECEIPT ON WHATSAPP
+                    </a>
+                    <p className="text-[11px] text-emerald-900/80">
+                      Opens WhatsApp with your Order ID, Payment Reference, Amount, and LagosLife username prefilled.
+                    </p>
+                  </div>
+                );
+              })()}
+
               <form onSubmit={handleSubmitProof} className="space-y-3 border-t border-slate-100 pt-3">
+                <div className="text-xs font-semibold text-slate-600">
+                  Or submit your bank transfer reference directly in-app:
+                </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label className="block text-xs font-medium text-slate-700">

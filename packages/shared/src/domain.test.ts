@@ -83,9 +83,10 @@ describe("Commercial & Commission Rules", () => {
     assert.equal(pending.ownerEntitlementKobo, null);
   });
 
-  it("calculates bulk pricing at ₦1,000 per 1T with 10T minimum", () => {
+  it("calculates bulk pricing at ₦1,000 per 1T with 1T minimum", () => {
+    assert.equal(calculateBulkOrderFiatKobo(1_000_000_000_000n), 100_000n);
     assert.equal(calculateBulkOrderFiatKobo(10_000_000_000_000n), 1_000_000n);
-    assert.throws(() => calculateBulkOrderFiatKobo(9_000_000_000_000n), /at least/);
+    assert.throws(() => calculateBulkOrderFiatKobo(500_000_000_000n), /at least/);
   });
 
   it("normalizes and masks emails, phones, LagosLife usernames, and referral codes", () => {

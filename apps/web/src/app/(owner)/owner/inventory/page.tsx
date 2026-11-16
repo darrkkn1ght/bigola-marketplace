@@ -70,15 +70,26 @@ interface PendingTwoFactorState {
   message: string;
 }
 
-const SLOT_ORDER = ["MAIN_TREASURY", "RESERVE_1", "RESERVE_2", "RESERVE_3", "RESERVE_4"];
+function formatSlotTitle(slotCode: string): string {
+  if (slotCode === "MAIN_TREASURY") return "Main Treasury";
+  const match = /^RESERVE_(\d+)$/.exec(slotCode);
+  if (match) return `Reserve ${match[1]}`;
+  return slotCode.replace(/_/g, " ");
+}
 
-const SLOT_TITLES: Record<string, string> = {
-  MAIN_TREASURY: "Main Treasury",
-  RESERVE_1: "Reserve 1",
-  RESERVE_2: "Reserve 2",
-  RESERVE_3: "Reserve 3",
-  RESERVE_4: "Reserve 4",
-};
+function slotSortRank(slotCode: string): number {
+  if (slotCode === "MAIN_TREASURY") return 0;
+  const match = /^RESERVE_(\d+)$/.exec(slotCode);
+  if (match) return Number(match[1]);
+  return 9999;
+}
+
+const SLOT_TITLES: Record<string, string> = new Proxy(
+  {},
+  {
+    get: (_target, prop) => formatSlotTitle(String(prop)),
+  }
+);
 
 const RESERVE_PLANNING_TARGET_UNITS = "70000000000000"; // 70T planning target
 
@@ -153,6 +164,19 @@ export default function OwnerInventoryPage() {
   const [configUsername, setConfigUsername] = useState("");
   const [configReason, setConfigReason] = useState("");
 
+  // Dynamic Add Reserve Account modal
+  const [addReserveOpen, setAddReserveOpen] = useState(false);
+  const [newReserveUsername, setNewReserveUsername] = useState("");
+  const [newReserveTargetT, setNewReserveTargetT] = useState("70");
+  const [newReserveReason, setNewReserveReason] = useState("");
+
+  // Main Treasury -> Reserve Refill modal
+  const [refillOpen, setRefillOpen] = useState(false);
+  const [refillTargetSlot, setRefillTargetSlot] = useState("RESERVE_1");
+  const [refillAmountT, setRefillAmountT] = useState("1");
+  const [refillConfirm, setRefillConfirm] = useState(false);
+  const [refillReason, setRefillReason] = useState("");
+
   const [submitting, setSubmitting] = useState(false);
 
   async function loadAll() {
@@ -195,7 +219,7 @@ export default function OwnerInventoryPage() {
       setPipelineBySlot(nextPipeMap);
 
       const sortedSlots = [...(invData.slots || [])].sort(
-        (a, b) => SLOT_ORDER.indexOf(a.slotCode) - SLOT_ORDER.indexOf(b.slotCode)
+        (a, b) => slotSortRank(a.slotCode) - slotSortRank(b.slotCode) || a.slotCode.localeCompare(b.slotCode)
       );
       setSlots(sortedSlots);
       setTotals(
@@ -218,6 +242,84 @@ export default function OwnerInventoryPage() {
   useEffect(() => {
     loadAll();
   }, []);
+
+  async function handleAddReserveAccount(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError("");
+    setMessage("");
+    try {
+      const targetUnits = BigInt(Math.max(0, Math.floor(Number(newReserveTargetT) || 0))) * 1_000_000_000_000n;
+      const res = await apiRequest<{ account: { slotCode: string } }>("/owner/inventory/accounts", {
+        method: "POST",
+        body: JSON.stringify({
+          lagoslifeUsername: newReserveUsername.trim() || undefined,
+          targetReserveAmount: targetUnits.toString(),
+          reason: newReserveReason.trim() || "Owner added dynamic reserve slot",
+        }),
+      });
+      setMessage(`Created reserve slot ${res.account.slotCode}. Connect a LagosLife session to activate it.`);
+      setAddReserveOpen(false);
+      setNewReserveUsername("");
+      setNewReserveReason("");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create reserve slot.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRefillReserve(e: React.FormEvent) {
+    e.preventDefault();
+    if (!refillConfirm) {
+      setError("Please check the transfer confirmation box before executing a Main Treasury refill.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    setMessage("");
+    try {
+      const trillions = Number(refillAmountT);
+      if (!Number.isFinite(trillions) || trillions <= 0) {
+        throw new Error("Enter a positive refill amount in Trillions (T).");
+      }
+      const units = BigInt(Math.round(trillions * 1_000)) * 1_000_000_000n; // supports 0.1T (100B) precision
+      const res = await apiRequest<{
+        refillId: string;
+        status: string;
+        chunkAmount: string;
+        remainingAmount: string;
+        queuedRemaining: boolean;
+        error: string | null;
+      }>("/owner/inventory/refill-reserve", {
+        method: "POST",
+        body: JSON.stringify({
+          targetSlotCode: refillTargetSlot,
+          amount: units.toString(),
+          confirmTransfer: true,
+          reason: refillReason.trim() || `Refill ${refillTargetSlot} from Main Treasury`,
+        }),
+      });
+      if (res.status === "AMBIGUOUS_MANUAL_REVIEW") {
+        setError(res.error || "Refill paused for manual verification (ambiguous transfer outcome).");
+      } else {
+        setMessage(
+          res.queuedRemaining
+            ? `Refill #${res.refillId} started (sent ${formatTrillions(res.chunkAmount)}; remaining ${formatTrillions(res.remainingAmount)} queued in 100B chunks).`
+            : `Refill #${res.refillId} completed (${res.status}).`
+        );
+        setRefillOpen(false);
+        setRefillConfirm(false);
+        setRefillReason("");
+      }
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refill reserve from Main Treasury.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   function openConnectModal(slot: InventorySlot) {
     setConnectSlot(slot);
@@ -732,7 +834,7 @@ export default function OwnerInventoryPage() {
             <p className="mt-1 text-xl font-bold text-slate-900 tabular-nums">
               {formatTrillions(totals.observedBalance)}
             </p>
-            <p className="mt-1 text-[11px] text-slate-400">Across all 5 fulfilment accounts</p>
+            <p className="mt-1 text-[11px] text-slate-400">Across all {slots.length} fulfilment accounts</p>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
             <p className="text-xs font-medium text-slate-500">Reserved for Active Orders</p>
@@ -751,7 +853,7 @@ export default function OwnerInventoryPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
             <p className="text-xs font-medium text-slate-500">Connected Sessions</p>
             <p className="mt-1 text-xl font-bold text-indigo-700 tabular-nums">
-              {connectedSlotCount} / 5
+              {connectedSlotCount} / {slots.length}
             </p>
             <p className="mt-1 text-[11px] text-slate-400">Live AES-256-GCM encrypted sessions</p>
           </div>
@@ -768,11 +870,32 @@ export default function OwnerInventoryPage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-base font-semibold text-slate-900">
-            Five-Account Fulfilment Topology (Arrangement A)
+            Fulfilment Account Topology ({slots.length} Accounts)
           </h2>
           <p className="text-xs text-slate-500">
-            Each account maintains an isolated encrypted LagosLife session, independent live balance, and customer fulfilment eligibility. Reserve 1–4 carry a 70T planning target (not an assumed balance).
+            Each account maintains an isolated encrypted LagosLife session, independent live balance, and customer fulfilment eligibility.
           </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              const firstReserve = slots.find((s) => s.accountRole === "RESERVE");
+              if (firstReserve) setRefillTargetSlot(firstReserve.slotCode);
+              setRefillConfirm(false);
+              setRefillOpen(true);
+            }}
+            className="rounded-lg border border-emerald-600 bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 cursor-pointer"
+          >
+            Refill Reserve from Treasury
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddReserveOpen(true)}
+            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 cursor-pointer"
+          >
+            + Add Reserve Account
+          </button>
         </div>
       </div>
 
@@ -1591,6 +1714,132 @@ export default function OwnerInventoryPage() {
             className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
           >
             {submitting ? "Updating..." : "Save Logical Allocation"}
+          </button>
+        </form>
+      </SlideOver>
+
+      <SlideOver
+        open={addReserveOpen}
+        onClose={() => setAddReserveOpen(false)}
+        title="Add Dynamic Reserve Account"
+        subtitle="Create a new RESERVE_N fulfilment slot without altering existing accounts."
+      >
+        <form onSubmit={handleAddReserveAccount} className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-700">
+              LagosLife Username (optional)
+            </label>
+            <input
+              type="text"
+              value={newReserveUsername}
+              onChange={(e) => setNewReserveUsername(e.target.value)}
+              placeholder="e.g. reserve_account_5"
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-700">
+              Target Reserve Planning Amount (T)
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={newReserveTargetT}
+              onChange={(e) => setNewReserveTargetT(e.target.value)}
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-700">Audit Reason</label>
+            <input
+              type="text"
+              required
+              minLength={3}
+              value={newReserveReason}
+              onChange={(e) => setNewReserveReason(e.target.value)}
+              placeholder="Expand reserve capacity"
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full rounded-lg bg-slate-900 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+          >
+            {submitting ? "Creating..." : "Create Reserve Account"}
+          </button>
+        </form>
+      </SlideOver>
+
+      <SlideOver
+        open={refillOpen}
+        onClose={() => setRefillOpen(false)}
+        title="Refill Reserve from Main Treasury"
+        subtitle="Executes real LagosLife transfer(s) in <=100B chunks with 30.5s cooldown."
+      >
+        <form onSubmit={handleRefillReserve} className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-700">
+              Target Reserve Account
+            </label>
+            <select
+              value={refillTargetSlot}
+              onChange={(e) => setRefillTargetSlot(e.target.value)}
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            >
+              {slots
+                .filter((s) => s.accountRole === "RESERVE")
+                .map((s) => (
+                  <option key={s.slotCode} value={s.slotCode}>
+                    {formatSlotTitle(s.slotCode)} (@{s.lagoslifeUsername ?? "unconfigured"})
+                  </option>
+                ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-700">
+              Transfer Amount in Trillions (T) — supports 0.1T (100B) steps
+            </label>
+            <input
+              type="number"
+              step="0.1"
+              min="0.1"
+              required
+              value={refillAmountT}
+              onChange={(e) => setRefillAmountT(e.target.value)}
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-700">Audit Reason</label>
+            <input
+              type="text"
+              required
+              minLength={3}
+              value={refillReason}
+              onChange={(e) => setRefillReason(e.target.value)}
+              placeholder="Refill reserve slot for customer orders"
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <input
+              type="checkbox"
+              checked={refillConfirm}
+              onChange={(e) => setRefillConfirm(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              I confirm executing a live LagosLife transfer from <strong>MAIN_TREASURY</strong> to{" "}
+              <strong>{refillTargetSlot}</strong>.
+            </span>
+          </label>
+          <button
+            type="submit"
+            disabled={submitting || !refillConfirm}
+            className="w-full rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {submitting ? "Executing Refill..." : "Confirm & Refill Reserve"}
           </button>
         </form>
       </SlideOver>

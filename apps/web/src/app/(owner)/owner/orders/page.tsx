@@ -301,6 +301,11 @@ export default function OwnerOrdersPage() {
   const [inventorySlots, setInventorySlots] = useState<InventorySlotOption[]>([]);
   const [disbursementEnabled, setDisbursementEnabled] = useState<boolean>(false);
 
+  // One-click Confirm Payment & Start Delivery state
+  const [confirmDeliverOrder, setConfirmDeliverOrder] = useState<OrderSummary | null>(null);
+  const [confirmRefInput, setConfirmRefInput] = useState("");
+  const [confirmBusy, setConfirmBusy] = useState(false);
+
   // Resolved Recipient State
   const [resolvedRecipient, setResolvedRecipient] = useState<ResolvedRecipientMeta | null>(null);
   const [resolvingRecipient, setResolvingRecipient] = useState(false);
@@ -697,6 +702,47 @@ export default function OwnerOrdersPage() {
       await loadOrders();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to run expiry sweep.");
+    }
+  };
+
+  const handleConfirmPaymentAndDeliver = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!confirmDeliverOrder) return;
+    const ref = confirmRefInput.trim();
+    if (ref.length < 3) {
+      setError("Enter a valid OPay / bank transaction reference (at least 3 characters).");
+      return;
+    }
+    setConfirmBusy(true);
+    setError(null);
+    setActionBanner(null);
+    try {
+      const res = await apiRequest<{
+        idempotent: boolean;
+        orderStatus: string;
+        job?: { id: string; totalChunks: number } | null;
+      }>(`/owner/orders/${confirmDeliverOrder.id}/confirm-and-deliver`, {
+        method: "POST",
+        body: JSON.stringify({
+          bankCreditReference: ref,
+        }),
+      });
+      setActionBanner(
+        res.job
+          ? `Payment confirmed for ${confirmDeliverOrder.orderNumber} and delivery queued (${res.job.totalChunks} chunk(s)).`
+          : `Payment confirmed for ${confirmDeliverOrder.orderNumber} (status: ${res.orderStatus}).`
+      );
+      const targetId = confirmDeliverOrder.id;
+      setConfirmDeliverOrder(null);
+      setConfirmRefInput("");
+      await loadOrders();
+      if (selectedOrderId === targetId) {
+        await loadOrderDetail(targetId);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to confirm payment and start delivery.");
+    } finally {
+      setConfirmBusy(false);
     }
   };
 
@@ -1221,12 +1267,27 @@ export default function OwnerOrdersPage() {
                           {formatDateTime(o.createdAt)}
                         </td>
                         <td className="py-3 text-right">
-                          <Button
-                            variant="secondary"
-                            onClick={() => setSelectedOrderId(o.id)}
-                          >
-                            Manage &amp; Disburse
-                          </Button>
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            {(o.status === "AWAITING_PAYMENT" ||
+                              o.status === "PAYMENT_SUBMITTED" ||
+                              o.status === "PAYMENT_EXCEPTION_REVIEW") && (
+                              <Button
+                                variant="owner"
+                                onClick={() => {
+                                  setConfirmDeliverOrder(o);
+                                  setConfirmRefInput("");
+                                }}
+                              >
+                                Confirm Payment &amp; Start Delivery
+                              </Button>
+                            )}
+                            <Button
+                              variant="secondary"
+                              onClick={() => setSelectedOrderId(o.id)}
+                            >
+                              Manage &amp; Disburse
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1236,6 +1297,54 @@ export default function OwnerOrdersPage() {
             </div>
           )}
         </Card>
+
+        {confirmDeliverOrder && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  Confirm Payment &amp; Start Delivery
+                </h3>
+                <p className="mt-1 text-xs text-slate-600">
+                  Verify OPay/bank receipt for{" "}
+                  <strong>{confirmDeliverOrder.orderNumber}</strong> (@
+                  {confirmDeliverOrder.recipientLagoslifeUsername}) —{" "}
+                  <strong>{formatNaira(confirmDeliverOrder.fiatAmountKobo)}</strong>.
+                </p>
+              </div>
+              <form onSubmit={handleConfirmPaymentAndDeliver} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    OPay / Bank Transaction Reference
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    minLength={3}
+                    autoFocus
+                    placeholder="e.g. OPAY-20261116-98421"
+                    value={confirmRefInput}
+                    onChange={(e) => setConfirmRefInput(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono-tabular"
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setConfirmDeliverOrder(null)}
+                    disabled={confirmBusy}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" variant="owner" disabled={confirmBusy}>
+                    {confirmBusy ? "Confirming & Queuing…" : "Confirm & Start Delivery"}
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         <SlideOver
           open={Boolean(selectedOrderId)}

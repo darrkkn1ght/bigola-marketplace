@@ -179,10 +179,17 @@ describe("Phase 4 Orders, Pricing & Inventory Integrity (Neon PostgreSQL)", { sk
       const cust1Auth = await loginAs(cust1User.email, "CustPass123!");
       const cust2Auth = await loginAs(cust2User.email, "CustPass123!");
 
-      // 2. Ensure deterministic baseline on seeded slots before syncing RESERVE_1 (20T) and MAIN_TREASURY (15T) -> 35T fresh; make RESERVE_2 STALE (50T)
+      // 2. Ensure deterministic baseline on seeded slots before syncing RESERVE_1 (20T) and MAIN_TREASURY (15T) -> 35T fresh; mark all other slots STALE
       await prisma.gameAccount.updateMany({
         where: { slotCode: { in: ["MAIN_TREASURY", "RESERVE_1"] } },
         data: { reservedForOrders: "0" },
+      });
+      await prisma.gameAccount.updateMany({
+        where: { slotCode: { notIn: ["MAIN_TREASURY", "RESERVE_1"] } },
+        data: {
+          reservedForOrders: "0",
+          lastSyncedAt: new Date(Date.now() - 120 * 60_000),
+        },
       });
       const syncR1 = await app.inject({
         method: "POST",

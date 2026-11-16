@@ -427,13 +427,19 @@ describe("Phase 5 Independent Payment Verification & OPay Reconciliation (Neon P
       createdUploadIds.push(stmtRes.json().upload.id);
       const [line6k, line4k, lineRepay4k, line7k, line3k] = stmtRes.json().lines as Array<{ id: string }>;
 
-      // Order 1 must still be PAYMENT_SUBMITTED and verified revenue = 0
+      // Order 1 must still be PAYMENT_SUBMITTED and baseline accountability captured
       const acctBefore = await app.inject({
         method: "GET",
         url: "/api/v1/verification/accountability",
         headers: { authorization: `Bearer ${ownerToken}` },
       });
-      assert.equal(acctBefore.json().paymentsVerified.netVerifiedCustomerPaymentsKobo, "0");
+      assert.equal(acctBefore.statusCode, 200);
+      const baselineNetVerified = BigInt(
+        acctBefore.json().paymentsVerified.netVerifiedCustomerPaymentsKobo
+      );
+      const baselinePartnerCommission = BigInt(
+        acctBefore.json().commissionEntitlements.totalNetPartnerEntitlementKobo
+      );
 
       // 6. Split Payment Step 1: Partner 1 independently approves ₦6,000 -> PAYMENT_EXCEPTION_REVIEW, 0 commission
       const app6k = await app.inject({
@@ -504,14 +510,26 @@ describe("Phase 5 Independent Payment Verification & OPay Reconciliation (Neon P
       assert.equal(ord1AfterRev.fundingCycle, 2);
       assert.ok(ord1AfterRev.expiresAt !== null, "Reservation expiry must be restored after reversal");
 
-      // Accountability after reversal: net verified = 600000, net partner commission = 0
+      // Accountability after reversal: delta net verified = +600000, delta net partner commission = 0
       const acctAfterRev = await app.inject({
         method: "GET",
         url: "/api/v1/verification/accountability",
         headers: { authorization: `Bearer ${ownerToken}` },
       });
-      assert.equal(acctAfterRev.json().paymentsVerified.netVerifiedCustomerPaymentsKobo, "600000");
-      assert.equal(acctAfterRev.json().commissionEntitlements.totalNetPartnerEntitlementKobo, "0");
+      assert.equal(
+        (
+          BigInt(acctAfterRev.json().paymentsVerified.netVerifiedCustomerPaymentsKobo) -
+          baselineNetVerified
+        ).toString(),
+        "600000"
+      );
+      assert.equal(
+        (
+          BigInt(acctAfterRev.json().commissionEntitlements.totalNetPartnerEntitlementKobo) -
+          baselinePartnerCommission
+        ).toString(),
+        "0"
+      );
 
       // 9. Permanent Bank-Credit Deduplication: Reversed line4k AND its reference CANNOT be reused on Order 2
       const ord2Res = await app.inject({
