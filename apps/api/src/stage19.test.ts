@@ -293,8 +293,14 @@ test("Stage 19.2: Missing/Incorrect PIN, Optional 2FA challenge/resume, and Ambi
       },
     },
     inventoryReservation: {
-      findMany: async () => order.reservations,
+      findMany: async () =>
+        order.reservations.filter((r) => r.status === InventoryReservationStatus.ACTIVE),
       update: async ({ data }: { data: Record<string, unknown> }) => {
+        if (data.amount !== undefined && BigInt(String(data.amount)) <= 0n) {
+          throw new Error(
+            "23514: violates check constraint chk_inventory_reservations_positive_amount"
+          );
+        }
         Object.assign(order.reservations[0]!, data);
         return order.reservations[0]!;
       },
@@ -519,8 +525,14 @@ test("Stage 19.3: HTTP 401 on /api/send pauses job (409 on Execute), and reconne
       },
     },
     inventoryReservation: {
-      findMany: async () => order.reservations,
+      findMany: async () =>
+        order.reservations.filter((r) => r.status === InventoryReservationStatus.ACTIVE),
       update: async ({ data }: { data: Record<string, unknown> }) => {
+        if (data.amount !== undefined && BigInt(String(data.amount)) <= 0n) {
+          throw new Error(
+            "23514: violates check constraint chk_inventory_reservations_positive_amount"
+          );
+        }
         Object.assign(order.reservations[0]!, data);
         return order.reservations[0]!;
       },
@@ -730,8 +742,14 @@ test("Stage 19.4: Reconnect preserves PIN, clearing PIN triggers PIN_REQUIRED, a
       },
     },
     inventoryReservation: {
-      findMany: async () => order.reservations,
+      findMany: async () =>
+        order.reservations.filter((r) => r.status === InventoryReservationStatus.ACTIVE),
       update: async ({ data }: { data: Record<string, unknown> }) => {
+        if (data.amount !== undefined && BigInt(String(data.amount)) <= 0n) {
+          throw new Error(
+            "23514: violates check constraint chk_inventory_reservations_positive_amount"
+          );
+        }
         Object.assign(order.reservations[0]!, data);
         return order.reservations[0]!;
       },
@@ -936,8 +954,14 @@ test("Stage 19.5: Slow/failed DB commit after HTTP 200 pauses as AMBIGUOUS_MANUA
       },
     },
     inventoryReservation: {
-      findMany: async () => order.reservations,
+      findMany: async () =>
+        order.reservations.filter((r) => r.status === InventoryReservationStatus.ACTIVE),
       update: async ({ data }: { data: Record<string, unknown> }) => {
+        if (data.amount !== undefined && BigInt(String(data.amount)) <= 0n) {
+          throw new Error(
+            "23514: violates check constraint chk_inventory_reservations_positive_amount"
+          );
+        }
         Object.assign(order.reservations[0]!, data);
         return order.reservations[0]!;
       },
@@ -1022,4 +1046,153 @@ test("Stage 19.5: Slow/failed DB commit after HTTP 200 pauses as AMBIGUOUS_MANUA
   assert.equal(sendCount, 2);
   assert.equal(job.status, DisbursementJobStatus.COMPLETED);
   assert.equal(job.deliveredAmount, "200000000000");
+});
+
+test("Stage 19.6: Cross-account ambiguous resolution and normal completion preserve positive reservation amount (chk_inventory_reservations_positive_amount)", async () => {
+  const res4 = {
+    id: "acc-4",
+    slotCode: "RESERVE_4",
+    lagoslifeUsername: "milespete",
+    healthStatus: GameAccountHealth.ACTIVE,
+    lastKnownBalance: "500000000000",
+    reservedForOrders: "0",
+  };
+  const res1 = {
+    id: "acc-1",
+    slotCode: "RESERVE_1",
+    lagoslifeUsername: "mr_von_",
+    healthStatus: GameAccountHealth.ACTIVE,
+    lastKnownBalance: "500000000000",
+    reservedForOrders: "100000000000",
+  };
+  const order = {
+    id: "ord-chk",
+    orderNumber: "ORD-CHK",
+    customerId: "cust-1",
+    recipientLagoslifeUsername: "kuronox",
+    status: OrderStatus.DISBURSING,
+    gameAmountRequested: "100000000000",
+    gameAmountDelivered: "0",
+    fulfilledAmount: "0",
+    reservations: [
+      {
+        id: "res-chk-1",
+        orderId: "ord-chk",
+        gameAccountId: "acc-1",
+        amount: "100000000000",
+        status: InventoryReservationStatus.ACTIVE as InventoryReservationStatus,
+        releasedAt: null as Date | null,
+        releaseReason: null as string | null,
+      },
+    ],
+  };
+  const job = {
+    id: "job-chk",
+    orderId: "ord-chk",
+    totalAmount: "100000000000",
+    deliveredAmount: "0",
+    status: DisbursementJobStatus.PAUSED as DisbursementJobStatus,
+    totalChunks: 1,
+    completedChunks: 0,
+    startedAt: new Date(),
+    completedAt: null as Date | null,
+    createdAt: new Date(),
+  };
+  const chunk = {
+    id: "chk-ambig-1",
+    jobId: "job-chk",
+    sourceAccountId: "acc-4",
+    recipientUsername: "kuronox|target_k",
+    amount: "100000000000",
+    idempotencyKey: "disb_chk_c1",
+    status: DisbursementChunkStatus.AMBIGUOUS_MANUAL_REVIEW as DisbursementChunkStatus,
+    attemptCount: 1,
+    httpStatus: 200,
+    errorMessage: null as string | null,
+    reconciliationNote: null as string | null,
+    executedAt: null as Date | null,
+    createdAt: new Date(),
+  };
+
+  let ledgerDebits = 0;
+  const accountsById = new Map<string, typeof res4>([
+    ["acc-4", res4],
+    ["acc-1", res1],
+  ]);
+
+  const txPrisma = {
+    disbursementJob: {
+      findUnique: async () => ({ ...job, chunks: [chunk] }),
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        Object.assign(job, data);
+        return job;
+      },
+    },
+    disbursementChunk: {
+      findUnique: async () => chunk,
+      findMany: async () => [chunk],
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        Object.assign(chunk, data);
+        return chunk;
+      },
+    },
+    gameAccount: {
+      findUnique: async ({ where }: { where: { id: string } }) => accountsById.get(where.id) ?? null,
+      findMany: async () => [res1, res4],
+      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        const acc = accountsById.get(where.id)!;
+        Object.assign(acc, data);
+        return acc;
+      },
+    },
+    order: {
+      findUnique: async () => order,
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        Object.assign(order, data);
+        return order;
+      },
+    },
+    inventoryReservation: {
+      findMany: async () =>
+        order.reservations.filter((r) => r.status === InventoryReservationStatus.ACTIVE),
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        if (data.amount !== undefined && BigInt(String(data.amount)) <= 0n) {
+          throw new Error("23514: violates check constraint chk_inventory_reservations_positive_amount");
+        }
+        Object.assign(order.reservations[0]!, data);
+        return order.reservations[0]!;
+      },
+    },
+    inventoryLedger: {
+      create: async ({ data }: { data: { entryType?: string } }) => {
+        if (data.entryType === "DISBURSEMENT_DEBIT") ledgerDebits++;
+        return {};
+      },
+    },
+    customer: { findUnique: async () => ({ userId: "cust-user-1" }) },
+    notification: { create: async () => ({}) },
+    auditLog: { create: async () => ({}) },
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(txPrisma),
+  } as unknown as ConstructorParameters<typeof DisbursementService>[0];
+
+  const disb = new DisbursementService(txPrisma, TEST_KEY, new LagosLifeAdapter(), {
+    disbursementEnabled: true,
+  });
+
+  await disb.resolveAmbiguousChunk({
+    jobId: "job-chk",
+    chunkId: "chk-ambig-1",
+    outcome: "CONFIRMED_DELIVERED",
+    notes: "Confirmed delivered to @kuronox",
+    actorUserId: "owner-1",
+    actorRole: UserRole.OWNER,
+  });
+
+  assert.equal(chunk.status, DisbursementChunkStatus.SUCCEEDED);
+  assert.equal(order.reservations[0]!.status, InventoryReservationStatus.CONSUMED);
+  assert.equal(order.reservations[0]!.amount, "100000000000"); // Preserved > 0!
+  assert.equal(res1.reservedForOrders, "0");
+  assert.equal(job.deliveredAmount, "100000000000");
+  assert.equal(order.status, OrderStatus.COMPLETED);
+  assert.equal(ledgerDebits, 1);
 });

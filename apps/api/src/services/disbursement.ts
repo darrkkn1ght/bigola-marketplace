@@ -1835,9 +1835,9 @@ export class DisbursementService {
           await tx.inventoryReservation.update({
             where: { id: resv.id },
             data: {
-              amount: "0",
               status: InventoryReservationStatus.CONSUMED,
               releasedAt: now,
+              releaseReason: "DISBURSEMENT_CONFIRMED",
             },
           });
         } else {
@@ -1879,9 +1879,9 @@ export class DisbursementService {
               await tx.inventoryReservation.update({
                 where: { id: resv.id },
                 data: {
-                  amount: "0",
                   status: InventoryReservationStatus.CONSUMED,
                   releasedAt: now,
+                  releaseReason: "DISBURSEMENT_CONFIRMED",
                 },
               });
             } else {
