@@ -2314,20 +2314,21 @@ export class DisbursementService {
     const deliveredBig = toBigInt(job.deliveredAmount);
 
     await this.prisma.$transaction(async (tx) => {
-      for (const chunk of job.chunks) {
-        if (
-          chunk.status === DisbursementChunkStatus.PENDING ||
-          chunk.status === DisbursementChunkStatus.FAILED_RETRYABLE
-        ) {
-          await tx.disbursementChunk.update({
-            where: { id: chunk.id },
-            data: {
-              status: DisbursementChunkStatus.FAILED_TERMINAL,
-              errorMessage: `Cancelled by Owner: ${input.reason}`,
-            },
-          });
-        }
-      }
+      await tx.disbursementChunk.updateMany({
+        where: {
+          jobId: job.id,
+          status: {
+            in: [
+              DisbursementChunkStatus.PENDING,
+              DisbursementChunkStatus.FAILED_RETRYABLE,
+            ],
+          },
+        },
+        data: {
+          status: DisbursementChunkStatus.FAILED_TERMINAL,
+          errorMessage: `Cancelled by Owner: ${input.reason}`,
+        },
+      });
 
       const nextStatus =
         deliveredBig > 0n
@@ -2371,7 +2372,7 @@ export class DisbursementService {
           ipAddress: input.ipAddress,
         },
       });
-    });
+    }, DISBURSEMENT_TX_OPTIONS);
 
     return this.getJobDetail(job.id);
   }
