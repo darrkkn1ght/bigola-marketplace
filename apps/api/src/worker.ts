@@ -281,31 +281,6 @@ async function startWorker() {
     console.error(`[inventory-sync] job ${job?.id} failed:`, err);
   });
 
-  if (queues.inventorySyncQueue) {
-    const syncIntervalMinutes = Math.max(
-      5,
-      Math.min(60, Number(process.env.INVENTORY_SYNC_INTERVAL_MINUTES ?? 15) || 15)
-    );
-    await queues.inventorySyncQueue.add(
-      "periodic-inventory-sync",
-      {},
-      {
-        jobId: "periodic-inventory-sync",
-        repeat: { every: syncIntervalMinutes * 60_000 },
-        attempts: 1,
-      }
-    );
-    await queues.inventorySyncQueue.add(
-      "startup-inventory-sync",
-      {},
-      {
-        jobId: "startup-inventory-sync",
-        delay: 10_000,
-        attempts: 1,
-      }
-    );
-  }
-
   const syncWorkerControlAndHeartbeat = async () => {
     const control = await queues.getWorkerControl();
     if (control.intakePaused && !disbursementWorker.isPaused()) {
@@ -331,6 +306,35 @@ async function startWorker() {
   }, 15_000);
   heartbeatTimer.unref();
 
+  let inventorySyncTimer: ReturnType<typeof setInterval> | null = null;
+  if (queues.inventorySyncQueue) {
+    const syncQueue = queues.inventorySyncQueue;
+    const syncIntervalMinutes = Math.max(
+      5,
+      Math.min(60, Number(process.env.INVENTORY_SYNC_INTERVAL_MINUTES ?? 15) || 15)
+    );
+    const enqueueInventorySync = async (label: string, delayMs = 0) => {
+      try {
+        await syncQueue.add(
+          label,
+          {},
+          {
+            jobId: `${label}-${Date.now()}`,
+            ...(delayMs > 0 ? { delay: delayMs } : {}),
+            attempts: 1,
+          }
+        );
+      } catch (err) {
+        console.error(`[inventory-sync] Failed to enqueue ${label}:`, err);
+      }
+    };
+    void enqueueInventorySync("startup-inventory-sync", 10_000);
+    inventorySyncTimer = setInterval(() => {
+      void enqueueInventorySync("periodic-inventory-sync");
+    }, syncIntervalMinutes * 60_000);
+    inventorySyncTimer.unref();
+  }
+
   console.log(
     JSON.stringify({
       event: "worker_started",
@@ -348,6 +352,7 @@ async function startWorker() {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(heartbeatTimer);
+    if (inventorySyncTimer) clearInterval(inventorySyncTimer);
     await Promise.allSettled([
       disbursementWorker.close(),
       infraWorker.close(),
