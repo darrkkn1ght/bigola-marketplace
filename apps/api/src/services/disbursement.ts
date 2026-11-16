@@ -23,6 +23,7 @@ import { InventoryError } from "./inventory.js";
 export const MAX_TRANSFER_CHUNK = MAX_LAGOSLIFE_TRANSFER_CHUNK; // 100B (100_000_000_000n)
 export const ACCOUNT_COOLDOWN_MS = LAGOSLIFE_SEND_COOLDOWN_MS; // 30.5s (30_500ms)
 export const DEFAULT_ACCOUNT_MUTEX_TTL_MS = 60_000;
+export const DISBURSEMENT_TX_OPTIONS = { maxWait: 10_000, timeout: 30_000 } as const;
 
 export class DisbursementError extends Error {
   constructor(
@@ -1213,7 +1214,7 @@ export class DisbursementService {
             where: { id: job.id },
             data: { status: DisbursementJobStatus.PAUSED },
           });
-        });
+        }, DISBURSEMENT_TX_OPTIONS);
         pausedAmbiguousJobIds.push(job.id);
         continue;
       }
@@ -1575,19 +1576,40 @@ export class DisbursementService {
       // Case A: Confirmed HTTP 200 success
       if (sendResult.outcome === "SUCCEEDED") {
         await this.coordinator.setAccountCooldown(account.id, ACCOUNT_COOLDOWN_MS);
-        await this.commitConfirmedChunkDelivery({
-          jobId,
-          orderId,
-          chunkId: chunk.id,
-          accountId: account.id,
-          chunkAmount,
-          httpStatus: sendResult.status,
-          postSendBalanceHint: preSendBalance - chunkAmount,
-          reconciliationNote: null,
-          actorUserId: context?.actorUserId,
-          ipAddress: context?.ipAddress,
-        });
-        return "SUCCEEDED";
+        try {
+          await this.commitConfirmedChunkDelivery({
+            jobId,
+            orderId,
+            chunkId: chunk.id,
+            accountId: account.id,
+            chunkAmount,
+            httpStatus: sendResult.status,
+            postSendBalanceHint: preSendBalance - chunkAmount,
+            reconciliationNote: null,
+            actorUserId: context?.actorUserId,
+            ipAddress: context?.ipAddress,
+          });
+          return "SUCCEEDED";
+        } catch (commitErr) {
+          const msg = commitErr instanceof Error ? commitErr.message : String(commitErr);
+          const note = `LagosLife /api/send returned HTTP 200 (${chunkAmount.toString()} sent), but DB commit failed (${msg}). Do NOT retry; verify and resolve as DELIVERED.`;
+          await this.prisma.$transaction(async (tx) => {
+            await tx.disbursementChunk.update({
+              where: { id: chunk.id },
+              data: {
+                status: DisbursementChunkStatus.AMBIGUOUS_MANUAL_REVIEW,
+                httpStatus: sendResult.status,
+                errorMessage: msg,
+                reconciliationNote: note,
+              },
+            });
+            await tx.disbursementJob.update({
+              where: { id: jobId },
+              data: { status: DisbursementJobStatus.PAUSED },
+            });
+          }, DISBURSEMENT_TX_OPTIONS);
+          return "PAUSED_AMBIGUOUS";
+        }
       }
 
       // Case B: HTTP 429 Rate Limit (transfer was not executed; apply rate-limit cooldown)
@@ -1635,7 +1657,7 @@ export class DisbursementService {
           jobId,
           chunk.id,
           account.id,
-          `LagosLife session expired during /api/send (HTTP ${sendResult.status}).`,
+          `LagosLife session expired during /api/send (HTTP ${sendResult.status}): ${sendResult.message}`,
           true
         );
         return "PAUSED_SESSION_EXPIRED";
@@ -1741,7 +1763,7 @@ export class DisbursementService {
             ipAddress: context?.ipAddress,
           },
         });
-      });
+      }, DISBURSEMENT_TX_OPTIONS);
 
       return "PAUSED_AMBIGUOUS";
     } finally {
@@ -2013,7 +2035,7 @@ export class DisbursementService {
           ipAddress: params.ipAddress,
         },
       });
-    });
+    }, DISBURSEMENT_TX_OPTIONS);
   }
 
   private async pauseJobOnAccountError(
@@ -2041,7 +2063,7 @@ export class DisbursementService {
         where: { id: jobId },
         data: { status: DisbursementJobStatus.PAUSED },
       });
-    });
+    }, DISBURSEMENT_TX_OPTIONS);
   }
 
   /**
