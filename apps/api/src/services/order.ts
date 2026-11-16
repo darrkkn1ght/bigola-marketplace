@@ -747,7 +747,7 @@ export class OrderService {
           );
         }
 
-        // 7. Allocate across fresh, ACTIVE accounts (RESERVE slots first, then MAIN_TREASURY)
+        // 7. Allocate across fresh, ACTIVE accounts (MAIN_TREASURY first, then RESERVE slots)
         const eligibleAccounts = lockedAccounts
           .filter((acc) => {
             if (acc.health_status !== GameAccountHealth.ACTIVE) return false;
@@ -759,7 +759,7 @@ export class OrderService {
           })
           .sort((a, b) => {
             if (a.account_role !== b.account_role) {
-              return a.account_role === GameAccountRole.RESERVE ? -1 : 1;
+              return a.account_role === GameAccountRole.MAIN_TREASURY ? -1 : 1;
             }
             return a.slot_code.localeCompare(b.slot_code);
           });
