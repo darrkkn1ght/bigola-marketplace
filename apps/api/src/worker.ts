@@ -128,6 +128,48 @@ async function startWorker() {
             attempts: 1,
           }
         );
+      } else if (
+        nextDelayMs === null &&
+        job?.status === "COMPLETED" &&
+        queues.disbursementQueue &&
+        queues.redis
+      ) {
+        const autoQueueKey = `${env.QUEUE_PREFIX}:disbursement:auto_queue`;
+        while (true) {
+          const nextJobId = await queues.redis.lpop(autoQueueKey);
+          if (!nextJobId) break;
+          try {
+            const prep = await disbursementService.prepareJobForQueuedExecution({
+              jobId: nextJobId,
+              actorUserId: payload.actorUserId,
+            });
+            if (!prep.alreadyCompleted) {
+              const autoStepId = `disb_exec_${nextJobId}_auto_${Date.now()}`;
+              await queues.disbursementQueue.add(
+                "process-disbursement-job",
+                {
+                  jobId: nextJobId,
+                  orderId: prep.job.orderId,
+                  actorUserId: payload.actorUserId,
+                },
+                {
+                  jobId: autoStepId,
+                  delay: 30_500,
+                  attempts: 1,
+                }
+              );
+              console.log(
+                `[worker] Auto-queued next disbursement job ${nextJobId} (order ${prep.job.orderId}) in 30.5s`
+              );
+              break;
+            }
+          } catch (err) {
+            console.warn(
+              `[worker] Skipping auto-queue job ${nextJobId}:`,
+              err instanceof Error ? err.message : String(err)
+            );
+          }
+        }
       }
 
       return {
