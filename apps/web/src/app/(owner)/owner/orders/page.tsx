@@ -187,6 +187,10 @@ const CANONICAL_SLOTS = [
   "RESERVE_2",
   "RESERVE_3",
   "RESERVE_4",
+  "RESERVE_5",
+  "RESERVE_6",
+  "RESERVE_7",
+  "RESERVE_8",
 ] as const;
 
 const SLOT_LABELS: Record<string, string> = {
@@ -195,7 +199,19 @@ const SLOT_LABELS: Record<string, string> = {
   RESERVE_2: "Reserve 2",
   RESERVE_3: "Reserve 3",
   RESERVE_4: "Reserve 4",
+  RESERVE_5: "Reserve 5",
+  RESERVE_6: "Reserve 6",
+  RESERVE_7: "Reserve 7",
+  RESERVE_8: "Reserve 8",
 };
+
+function makeEmptySlotFlags(): Record<string, boolean> {
+  return Object.fromEntries(CANONICAL_SLOTS.map((s) => [s, false]));
+}
+
+function makeEmptySlotStrings(): Record<string, string> {
+  return Object.fromEntries(CANONICAL_SLOTS.map((s) => [s, ""]));
+}
 
 const ONE_BILLION = 1_000_000_000n;
 const MAX_CHUNK_UNITS = 100_000_000_000n; // 100B
@@ -311,21 +327,9 @@ export default function OwnerOrdersPage() {
   const [resolvingRecipient, setResolvingRecipient] = useState(false);
   const [recipientResolutionError, setRecipientResolutionError] = useState<string | null>(null);
 
-  // Stage 8C 5-Account Selection & Split Allocation State (in Billions)
-  const [selectedSlots, setSelectedSlots] = useState<Record<string, boolean>>({
-    MAIN_TREASURY: false,
-    RESERVE_1: false,
-    RESERVE_2: false,
-    RESERVE_3: false,
-    RESERVE_4: false,
-  });
-  const [splitBillionsBySlot, setSplitBillionsBySlot] = useState<Record<string, string>>({
-    MAIN_TREASURY: "",
-    RESERVE_1: "",
-    RESERVE_2: "",
-    RESERVE_3: "",
-    RESERVE_4: "",
-  });
+  // Account Selection & Split Allocation State (in Billions)
+  const [selectedSlots, setSelectedSlots] = useState<Record<string, boolean>>(makeEmptySlotFlags);
+  const [splitBillionsBySlot, setSplitBillionsBySlot] = useState<Record<string, string>>(makeEmptySlotStrings);
   const [authNote, setAuthNote] = useState("");
   const [disbBusy, setDisbBusy] = useState(false);
 
@@ -496,21 +500,9 @@ export default function OwnerOrdersPage() {
           void resolveRecipientUsername(mergedOrder.recipientLagoslifeUsername);
         }
 
-        // Pre-populate 5-account split allocations from active reservations
-        const defaultSelected: Record<string, boolean> = {
-          MAIN_TREASURY: false,
-          RESERVE_1: false,
-          RESERVE_2: false,
-          RESERVE_3: false,
-          RESERVE_4: false,
-        };
-        const defaultSplits: Record<string, string> = {
-          MAIN_TREASURY: "",
-          RESERVE_1: "",
-          RESERVE_2: "",
-          RESERVE_3: "",
-          RESERVE_4: "",
-        };
+        // Pre-populate account split allocations from active reservations
+        const defaultSelected = makeEmptySlotFlags();
+        const defaultSplits = makeEmptySlotStrings();
 
         for (const resv of mergedOrder.reservations ?? []) {
           if (resv.status === "ACTIVE" && resv.slotCode) {
@@ -1587,20 +1579,8 @@ export default function OwnerOrdersPage() {
                           <button
                             type="button"
                             onClick={() => {
-                              setSelectedSlots({
-                                MAIN_TREASURY: false,
-                                RESERVE_1: false,
-                                RESERVE_2: false,
-                                RESERVE_3: false,
-                                RESERVE_4: false,
-                              });
-                              setSplitBillionsBySlot({
-                                MAIN_TREASURY: "",
-                                RESERVE_1: "",
-                                RESERVE_2: "",
-                                RESERVE_3: "",
-                                RESERVE_4: "",
-                              });
+                              setSelectedSlots(makeEmptySlotFlags());
+                              setSplitBillionsBySlot(makeEmptySlotStrings());
                               setConfirmAuthorizeOpen(false);
                             }}
                             className="text-[11px] font-semibold text-slate-500 hover:text-slate-800"

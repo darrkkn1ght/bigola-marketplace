@@ -323,10 +323,14 @@ export class AccountTransferCoordinator {
 
   async setAccountCooldown(
     accountId: string,
-    cooldownMs: number = ACCOUNT_COOLDOWN_MS
+    cooldownMs: number = ACCOUNT_COOLDOWN_MS,
+    opts?: { respectMinimum?: boolean }
   ): Promise<number> {
     const now = this.nowFn();
-    const effectiveWaitMs = Math.max(cooldownMs, ACCOUNT_COOLDOWN_MS);
+    const effectiveWaitMs =
+      opts?.respectMinimum === false
+        ? Math.max(0, cooldownMs)
+        : Math.max(cooldownMs, ACCOUNT_COOLDOWN_MS);
     const existingUntil = this.memoryCooldownUntil.get(accountId) ?? 0;
     const untilMs = Math.max(existingUntil, now + effectiveWaitMs);
 
@@ -362,6 +366,10 @@ export const VALID_FULFILMENT_SLOT_CODES = [
   "RESERVE_2",
   "RESERVE_3",
   "RESERVE_4",
+  "RESERVE_5",
+  "RESERVE_6",
+  "RESERVE_7",
+  "RESERVE_8",
 ] as const;
 
 const VALID_SLOT_CODES = new Set<string>(VALID_FULFILMENT_SLOT_CODES);
@@ -1169,7 +1177,7 @@ export class DisbursementService {
     }
 
     const nextDelayMs =
-      minWaitMs === Number.MAX_SAFE_INTEGER ? 2000 : Math.max(500, minWaitMs + 100);
+      minWaitMs === Number.MAX_SAFE_INTEGER ? 2000 : Math.max(500, minWaitMs);
     return { job: await this.getJobDetail(refreshed.id), nextDelayMs };
   }
 
@@ -1573,6 +1581,7 @@ export class DisbursementService {
         }
       }
 
+      const sendStartedAt = Date.now();
       const sendResult = await this.lagosLifeAdapter.sendCurrencyChunk({
         cookie: session.cookie,
         targetId,
@@ -1584,7 +1593,13 @@ export class DisbursementService {
 
       // Case A: Confirmed HTTP 200 success
       if (sendResult.outcome === "SUCCEEDED") {
-        await this.coordinator.setAccountCooldown(account.id, ACCOUNT_COOLDOWN_MS);
+        // Anchor cooldown to when sendCurrencyChunk started and deduct ~1s pre-send overhead
+        // so effective send-to-send interval stays ~30.3-30.8s (~11.7-11.9T/hr) without 429s.
+        const elapsedSinceSendStart = Math.max(0, Date.now() - sendStartedAt);
+        const remainingCooldownMs = Math.max(28_200, ACCOUNT_COOLDOWN_MS - elapsedSinceSendStart - 1_000);
+        await this.coordinator.setAccountCooldown(account.id, remainingCooldownMs, {
+          respectMinimum: false,
+        });
         try {
           await this.commitConfirmedChunkDelivery({
             jobId,
