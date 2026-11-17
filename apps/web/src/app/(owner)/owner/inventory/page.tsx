@@ -178,10 +178,17 @@ export default function OwnerInventoryPage() {
   const [refillReason, setRefillReason] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
+  const [activeRefill, setActiveRefill] = useState<{
+    refillId: string;
+    targetSlotCode: string;
+    totalUnits: string;
+  } | null>(null);
 
-  async function loadAll() {
-    setLoading(true);
-    setError("");
+  async function loadAll(silent = false) {
+    if (!silent) {
+      setLoading(true);
+      setError("");
+    }
     try {
       const [invData, discData, pipeData] = await Promise.all([
         apiRequest<{
@@ -233,14 +240,22 @@ export default function OwnerInventoryPage() {
       setDiscrepancies(discData.discrepancies || []);
       setLedger(invData.recentLedger || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load inventory.");
+      if (!silent) {
+        setError(err instanceof Error ? err.message : "Failed to load inventory.");
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }
 
   useEffect(() => {
-    loadAll();
+    void loadAll(false);
+    const timer = setInterval(() => {
+      void loadAll(true);
+    }, 5_000);
+    return () => clearInterval(timer);
   }, []);
 
   async function handleAddReserveAccount(e: React.FormEvent) {
@@ -304,10 +319,15 @@ export default function OwnerInventoryPage() {
       if (res.status === "AMBIGUOUS_MANUAL_REVIEW") {
         setError(res.error || "Refill paused for manual verification (ambiguous transfer outcome).");
       } else {
+        setActiveRefill({
+          refillId: res.refillId,
+          targetSlotCode: refillTargetSlot,
+          totalUnits: units.toString(),
+        });
         setMessage(
           res.queuedRemaining
-            ? `Refill #${res.refillId} started (sent ${formatTrillions(res.chunkAmount)}; remaining ${formatTrillions(res.remainingAmount)} queued in 100B chunks).`
-            : `Refill #${res.refillId} completed (${res.status}).`
+            ? `Refill #${res.refillId} started (sent ${formatTrillions(res.chunkAmount)}; remaining ${formatTrillions(res.remainingAmount)} queued in 100B chunks — live progress updates below every 5s).`
+            : `Refill #${res.refillId} completed (${formatTrillions(res.chunkAmount)} delivered).`
         );
         setRefillOpen(false);
         setRefillConfirm(false);
@@ -826,6 +846,83 @@ export default function OwnerInventoryPage() {
           {message}
         </div>
       )}
+
+      {(() => {
+        const refillEntries = ledger.filter(
+          (l) =>
+            l.entryType === "TREASURY_TO_RESERVE" &&
+            !l.deltaAmount.startsWith("-") &&
+            (activeRefill
+              ? l.notes?.includes(activeRefill.refillId)
+              : Date.now() - new Date(l.createdAt).getTime() < 15 * 60_000)
+        );
+        if (!activeRefill && refillEntries.length === 0) return null;
+        const targetCode = activeRefill?.targetSlotCode ?? refillEntries[0]?.slotCode ?? "RESERVE_1";
+        const targetSlotObj = slots.find((s) => s.slotCode === targetCode);
+        const deliveredSum = refillEntries.reduce(
+          (acc, row) => acc + BigInt(row.deltaAmount || "0"),
+          0n
+        );
+        const totalTarget = activeRefill ? BigInt(activeRefill.totalUnits) : 0n;
+        const pct =
+          totalTarget > 0n
+            ? Math.min(100, Number((deliveredSum * 100n) / totalTarget))
+            : 100;
+        const isDone = totalTarget > 0n && deliveredSum >= totalTarget;
+        return (
+          <div className="mb-6 rounded-xl border border-indigo-200 bg-indigo-50/80 p-4 text-xs text-indigo-950 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-bold text-sm">
+                {isDone ? "✅ Treasury Refill Completed" : "🔄 Live Treasury -> Reserve Refill Progress"}{" "}
+                <span className="font-mono-tabular text-indigo-700">
+                  ({SLOT_TITLES[targetCode] ?? targetCode}
+                  {targetSlotObj?.lagoslifeUsername ? ` @${targetSlotObj.lagoslifeUsername}` : ""})
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-indigo-700">Auto-refreshing every 5s</span>
+                {activeRefill && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveRefill(null)}
+                    className="text-indigo-700 hover:underline font-semibold"
+                  >
+                    Dismiss
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-4 text-xs">
+              <span>
+                Delivered:{" "}
+                <strong className="font-mono-tabular">
+                  {formatTrillions(deliveredSum)}
+                </strong>
+                {totalTarget > 0n ? ` / ${formatTrillions(totalTarget)} (${pct}%)` : ""}
+              </span>
+              <span>
+                Chunks Confirmed: <strong>{refillEntries.length}</strong>
+              </span>
+              {targetSlotObj && (
+                <span>
+                  Current {SLOT_TITLES[targetCode] ?? targetCode} Balance:{" "}
+                  <strong className="font-mono-tabular text-emerald-800">
+                    {formatTrillions(targetSlotObj.observedBalance)}
+                  </strong>
+                </span>
+              )}
+            </div>
+            {totalTarget > 0n && (
+              <div className="h-2 w-full overflow-hidden rounded-full bg-indigo-200">
+                <div
+                  className="h-full bg-indigo-600 transition-all duration-300"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {totals && (
         <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">

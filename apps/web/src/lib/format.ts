@@ -12,10 +12,21 @@ export function formatNaira(koboInput: string | bigint | number): string {
   return `${isNeg ? "-" : ""}₦${formatted}`;
 }
 
+const ONE_BILLION = 1_000_000_000n;
+
 export function formatTrillions(rawAmount: string | bigint): string {
   const amount = typeof rawAmount === "bigint" ? rawAmount : BigInt(rawAmount || "0");
-  const t = amount / ONE_TRILLION;
-  return `${t.toLocaleString("en-NG")}T`;
+  if (amount === 0n) return "0T";
+  const sign = amount < 0n ? "-" : "";
+  const abs = amount < 0n ? -amount : amount;
+  const totalBillions = abs / ONE_BILLION;
+  const wholeT = abs / ONE_TRILLION;
+  const remBillions = totalBillions % 1_000n;
+  if (remBillions === 0n) {
+    return `${sign}${wholeT.toLocaleString("en-NG")}T`;
+  }
+  const fracStr = remBillions.toString().padStart(3, "0").replace(/0+$/, "");
+  return `${sign}${wholeT.toLocaleString("en-NG")}.${fracStr}T (${sign}${totalBillions.toLocaleString("en-NG")}B)`;
 }
 
 export function formatDateTime(iso: string | null | undefined): string {

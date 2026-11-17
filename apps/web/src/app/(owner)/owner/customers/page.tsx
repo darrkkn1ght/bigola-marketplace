@@ -28,17 +28,33 @@ interface OwnerCustomerRow {
 
 export default function OwnerCustomersPage() {
   const [customers, setCustomers] = useState<OwnerCustomerRow[]>([]);
+  const [partners, setPartners] = useState<Array<{ id: string; displayName: string; referralCode: string }>>([]);
+  const [selectedPartnerByCustomer, setSelectedPartnerByCustomer] = useState<Record<string, string>>({});
+  const [assigningCustomerId, setAssigningCustomerId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [resetInfo, setResetInfo] = useState<{ email: string; url: string } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadCustomers = useCallback(async (q: string) => {
     setLoading(true);
     try {
       const qs = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
-      const res = await apiRequest<{ customers: OwnerCustomerRow[] }>(`/owner/customers${qs}`);
+      const [res, pRes] = await Promise.all([
+        apiRequest<{ customers: OwnerCustomerRow[] }>(`/owner/customers${qs}`),
+        apiRequest<{ partners: Array<{ id: string; displayName: string; referralCode: string }> }>("/owner/partners").catch(() => ({ partners: [] })),
+      ]);
       setCustomers(res.customers);
+      setPartners(pRes.partners || []);
+      const initMap: Record<string, string> = {};
+      for (const c of res.customers) {
+        const match = (pRes.partners || []).find(
+          (p) => c.attributedPartner && p.referralCode === c.attributedPartner.referralCode
+        );
+        initMap[c.id] = match?.id ?? "";
+      }
+      setSelectedPartnerByCustomer(initMap);
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -68,6 +84,30 @@ export default function OwnerCustomersPage() {
     }
   }
 
+  async function handleAssignPartner(customerId: string, fullName: string) {
+    setAssigningCustomerId(customerId);
+    setError(null);
+    setNotice(null);
+    try {
+      const targetPartnerId = selectedPartnerByCustomer[customerId] || null;
+      await apiRequest(`/owner/customers/${customerId}/attribution`, {
+        method: "POST",
+        body: JSON.stringify({
+          targetPartnerId,
+          reason: targetPartnerId
+            ? "Owner assigned existing customer to Partner from Customer Directory"
+            : "Owner set customer to Direct (Category B) from Customer Directory",
+        }),
+      });
+      setNotice(`Updated Partner attribution for ${fullName}.`);
+      await loadCustomers(search);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setAssigningCustomerId(null);
+    }
+  }
+
   return (
     <OwnerShell>
       <div className="space-y-6">
@@ -83,6 +123,11 @@ export default function OwnerCustomersPage() {
         {error && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
+          </div>
+        )}
+        {notice && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            {notice}
           </div>
         )}
 
@@ -148,15 +193,42 @@ export default function OwnerCustomersPage() {
                         {c.orderCount} order(s)
                       </p>
                     </div>
-                    {c.userId && c.email && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800"
+                        value={selectedPartnerByCustomer[c.id] ?? ""}
+                        onChange={(e) =>
+                          setSelectedPartnerByCustomer((prev) => ({
+                            ...prev,
+                            [c.id]: e.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Direct (Big Ola — No Partner)</option>
+                        {partners.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.displayName} ({p.referralCode})
+                          </option>
+                        ))}
+                      </select>
                       <Button
                         size="sm"
-                        variant="ghost"
-                        onClick={() => handleIssueReset(c.userId!, c.email!)}
+                        variant="secondary"
+                        disabled={assigningCustomerId === c.id}
+                        onClick={() => void handleAssignPartner(c.id, c.fullName)}
                       >
-                        Issue Reset Token
+                        {assigningCustomerId === c.id ? "Saving…" : "Assign Partner"}
                       </Button>
-                    )}
+                      {c.userId && c.email && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleIssueReset(c.userId!, c.email!)}
+                        >
+                          Issue Reset Token
+                        </Button>
+                      )}
+                    </div>
                   </div>
 
                   {c.recentOrders.length > 0 && (
