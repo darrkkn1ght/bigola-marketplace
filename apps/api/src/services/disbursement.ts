@@ -1593,10 +1593,10 @@ export class DisbursementService {
 
       // Case A: Confirmed HTTP 200 success
       if (sendResult.outcome === "SUCCEEDED") {
-        // Anchor cooldown to when sendCurrencyChunk started and deduct ~1s pre-send overhead
-        // so effective send-to-send interval stays ~30.3-30.8s (~11.7-11.9T/hr) without 429s.
+        // Anchor cooldown to when sendCurrencyChunk started (without subtracting pre-send overhead)
+        // so effective send-to-send interval stays safely >= 30.5s without triggering 429s.
         const elapsedSinceSendStart = Math.max(0, Date.now() - sendStartedAt);
-        const remainingCooldownMs = Math.max(28_200, ACCOUNT_COOLDOWN_MS - elapsedSinceSendStart - 1_000);
+        const remainingCooldownMs = Math.max(29_500, ACCOUNT_COOLDOWN_MS - elapsedSinceSendStart);
         await this.coordinator.setAccountCooldown(account.id, remainingCooldownMs, {
           respectMinimum: false,
         });
@@ -1636,9 +1636,9 @@ export class DisbursementService {
         }
       }
 
-      // Case B: HTTP 429 Rate Limit (transfer was not executed; apply rate-limit cooldown)
+      // Case B: HTTP 429 Rate Limit (transfer was not executed; apply >= 65s rate-limit cooldown)
       if (sendResult.outcome === "RATE_LIMITED") {
-        const waitMs = sendResult.retryAfterMs ?? ACCOUNT_COOLDOWN_MS;
+        const waitMs = Math.max(65_000, sendResult.retryAfterMs ?? 65_000);
         await this.coordinator.setAccountCooldown(account.id, waitMs);
         await this.prisma.disbursementChunk.update({
           where: { id: chunk.id },
