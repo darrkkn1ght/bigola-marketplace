@@ -571,7 +571,7 @@ export default function OrderDetailClient() {
                 if (!primaryHref && !secondaryHref) {
                   return (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900">
-                      Send your transfer receipt on WhatsApp or submit your bank transfer reference below so we can confirm payment and start delivery.
+                      Send your transfer receipt on WhatsApp so we can confirm payment and start delivery.
                     </div>
                   );
                 }
@@ -609,95 +609,18 @@ export default function OrderDetailClient() {
                 );
               })()}
 
-              <form onSubmit={handleSubmitProof} className="space-y-3 border-t border-slate-100 pt-3">
-                <div className="text-xs font-semibold text-slate-600">
-                  Or submit your bank transfer reference directly in-app:
-                </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700">
-                      Sender Account Name
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Name on your bank account"
-                      value={senderAccountName}
-                      onChange={(e) => setSenderAccountName(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700">
-                      Bank Transfer Reference / Session ID
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. OPay session ID or bank ref"
-                      value={bankReference}
-                      onChange={(e) => setBankReference(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700">
-                      Amount Transferred (NGN)
-                    </label>
-                    <input
-                      type="number"
-                      required
-                      min="1"
-                      placeholder="Amount in Naira"
-                      value={amountPaidNaira}
-                      onChange={(e) => setAmountPaidNaira(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700">
-                      Receipt Reference / File Key
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Optional receipt filename or URL"
-                      value={proofFileKey}
-                      onChange={(e) => setProofFileKey(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    />
-                  </div>
-                </div>
-
-                <label className="flex items-center gap-2 text-xs text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={isSplitTransfer}
-                    onChange={(e) => setIsSplitTransfer(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-indigo-600"
-                  />
-                  This payment is part of a split bank transfer across multiple transactions
-                </label>
-
-                <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                  <Button type="submit" disabled={busy}>
-                    {busy ? "Submitting Proof..." : "Submit Payment Proof"}
+              {order.status === "AWAITING_PAYMENT" && !confirmCancelOpen && (
+                <div className="flex justify-end border-t border-slate-100 pt-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setConfirmCancelOpen(true)}
+                    disabled={busy}
+                  >
+                    Cancel Order
                   </Button>
-
-                  {order.status === "AWAITING_PAYMENT" && !confirmCancelOpen && (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => setConfirmCancelOpen(true)}
-                      disabled={busy}
-                    >
-                      Cancel Order
-                    </Button>
-                  )}
                 </div>
-              </form>
+              )}
 
               {order.status === "AWAITING_PAYMENT" && confirmCancelOpen && (
                 <div className="rounded-xl border border-rose-200 bg-rose-50 p-3.5 space-y-2.5 text-xs">
