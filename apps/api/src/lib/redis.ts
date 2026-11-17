@@ -59,7 +59,11 @@ export function buildRedisOptions(redisUrl: string): RedisOptions {
 }
 
 export function createBullMqConnection(redisUrl: string): Redis {
-  return new Redis(redisUrl, buildRedisOptions(redisUrl));
+  const client = new Redis(redisUrl, buildRedisOptions(redisUrl));
+  client.on("error", (err) => {
+    console.error("[redis] connection error:", err.message);
+  });
+  return client;
 }
 
 export function createQueueInfrastructure(redisUrl?: string, prefix = "bigola_mp"): QueueInfrastructure {
@@ -151,6 +155,17 @@ export function createQueueInfrastructure(redisUrl?: string, prefix = "bigola_mp
       removeOnFail: 100,
     },
   });
+
+  for (const [name, q] of [
+    ["disbursement-chunks", disbursementQueue],
+    ["order-expiry", orderExpiryQueue],
+    ["infra-health", infraHealthQueue],
+    ["inventory-sync", inventorySyncQueue],
+  ] as const) {
+    q.on("error", (err) => {
+      console.error(`[bullmq:${name}] queue error:`, err.message);
+    });
+  }
 
   return {
     redis,
@@ -327,6 +342,9 @@ export function createBullMqWorker(
     prefix,
     concurrency: options?.concurrency ?? 2,
     ...(options?.lockDuration ? { lockDuration: options.lockDuration } : {}),
+  });
+  worker.on("error", (err) => {
+    console.error(`[bullmq:${queueName}] worker error:`, err.message);
   });
   const originalClose = worker.close.bind(worker);
   worker.close = async (force?: boolean) => {

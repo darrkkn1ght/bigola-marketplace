@@ -282,21 +282,25 @@ async function startWorker() {
   });
 
   const syncWorkerControlAndHeartbeat = async () => {
-    const control = await queues.getWorkerControl();
-    if (control.intakePaused && !disbursementWorker.isPaused()) {
-      await disbursementWorker.pause();
-    } else if (!control.intakePaused && disbursementWorker.isPaused()) {
-      disbursementWorker.resume();
+    try {
+      const control = await queues.getWorkerControl();
+      if (control.intakePaused && !disbursementWorker.isPaused()) {
+        await disbursementWorker.pause();
+      } else if (!control.intakePaused && disbursementWorker.isPaused()) {
+        disbursementWorker.resume();
+      }
+      if (disbursementWorker.concurrency !== control.permittedConcurrency) {
+        disbursementWorker.concurrency = control.permittedConcurrency;
+      }
+      await queues.recordWorkerHeartbeat({
+        service: "bigola-marketplace-worker",
+        disbursementEnabled: env.DISBURSEMENT_ENABLED,
+        intakePaused: control.intakePaused,
+        permittedConcurrency: control.permittedConcurrency,
+      });
+    } catch (err) {
+      console.error("[worker] heartbeat/control sync failed:", (err as Error).message);
     }
-    if (disbursementWorker.concurrency !== control.permittedConcurrency) {
-      disbursementWorker.concurrency = control.permittedConcurrency;
-    }
-    await queues.recordWorkerHeartbeat({
-      service: "bigola-marketplace-worker",
-      disbursementEnabled: env.DISBURSEMENT_ENABLED,
-      intakePaused: control.intakePaused,
-      permittedConcurrency: control.permittedConcurrency,
-    });
   };
 
   await syncWorkerControlAndHeartbeat();
