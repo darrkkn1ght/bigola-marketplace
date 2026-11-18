@@ -9,7 +9,7 @@ export const DEFAULT_BULK_PRICE_KOBO_PER_TRILLION = 100_000n; // ₦1,000.00 in 
 export const DEFAULT_BULK_MIN_GAME_AMOUNT = ONE_TRILLION; // 1 Trillion
 
 export const RESTOCKING_ANNOUNCEMENT =
-  "RESTOCKING DAYS: We do not process new sales on Wednesdays and Saturdays. Normal sales resume on the next available sales day." as const;
+  "RESTOCKING DAYS: We do not process new sales on Wednesdays and weekends (Saturdays & Sundays). Normal sales resume on the next available sales day." as const;
 
 export interface RestockingScheduleStatus {
   timezone: "Africa/Lagos";
@@ -19,27 +19,25 @@ export interface RestockingScheduleStatus {
   announcement: string;
 }
 
+const RESTOCKING_DAY_MAP: Record<string, { lagosWeekday: string; nextSalesDay: string }> = {
+  Wed: { lagosWeekday: "Wednesday", nextSalesDay: "Thursday" },
+  Sat: { lagosWeekday: "Saturday", nextSalesDay: "Monday" },
+  Sun: { lagosWeekday: "Sunday", nextSalesDay: "Monday" },
+};
+
 export function getRestockingScheduleStatus(now: Date = new Date()): RestockingScheduleStatus {
   const weekday = new Intl.DateTimeFormat("en-US", {
     timeZone: "Africa/Lagos",
     weekday: "short",
   }).format(now);
 
-  if (weekday === "Wed") {
+  const closed = RESTOCKING_DAY_MAP[weekday];
+  if (closed) {
     return {
       timezone: "Africa/Lagos",
-      lagosWeekday: "Wednesday",
+      lagosWeekday: closed.lagosWeekday,
       isRestockingDay: true,
-      nextSalesDay: "Thursday",
-      announcement: RESTOCKING_ANNOUNCEMENT,
-    };
-  }
-  if (weekday === "Sat") {
-    return {
-      timezone: "Africa/Lagos",
-      lagosWeekday: "Saturday",
-      isRestockingDay: true,
-      nextSalesDay: "Sunday",
+      nextSalesDay: closed.nextSalesDay,
       announcement: RESTOCKING_ANNOUNCEMENT,
     };
   }

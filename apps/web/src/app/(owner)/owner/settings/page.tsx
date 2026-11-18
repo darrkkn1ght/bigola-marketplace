@@ -238,7 +238,7 @@ export default function OwnerSettingsPage() {
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-semibold">
-                  Weekly Restocking Schedule (Africa/Lagos): Closed every Wednesday &amp; Saturday
+                  Weekly Restocking Schedule (Africa/Lagos): Closed every Wednesday &amp; Weekend (Saturday &amp; Sunday)
                 </span>
                 <StatusBadge
                   label={
@@ -250,7 +250,7 @@ export default function OwnerSettingsPage() {
                 />
               </div>
               <p className="mt-1 text-[11px]">
-                New customer orders are automatically rejected on Wednesdays and Saturdays (Africa/Lagos) and reopen automatically on Thursday/Sunday. Existing paid, authorized, or queued orders and running fulfilment jobs are never disrupted.
+                New customer orders are automatically rejected on Wednesdays and weekends (Saturdays &amp; Sundays, Africa/Lagos) and reopen automatically on Thursday/Monday. Existing paid, authorized, or queued orders and running fulfilment jobs are never disrupted.
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
