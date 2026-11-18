@@ -191,6 +191,7 @@ const CANONICAL_SLOTS = [
   "RESERVE_6",
   "RESERVE_7",
   "RESERVE_8",
+  "RESERVE_9",
 ] as const;
 
 const SLOT_LABELS: Record<string, string> = {
@@ -203,6 +204,7 @@ const SLOT_LABELS: Record<string, string> = {
   RESERVE_6: "Reserve 6",
   RESERVE_7: "Reserve 7",
   RESERVE_8: "Reserve 8",
+  RESERVE_9: "Reserve 9",
 };
 
 function makeEmptySlotFlags(): Record<string, boolean> {

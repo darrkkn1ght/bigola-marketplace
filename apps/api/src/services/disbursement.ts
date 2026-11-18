@@ -370,6 +370,7 @@ export const VALID_FULFILMENT_SLOT_CODES = [
   "RESERVE_6",
   "RESERVE_7",
   "RESERVE_8",
+  "RESERVE_9",
 ] as const;
 
 const VALID_SLOT_CODES = new Set<string>(VALID_FULFILMENT_SLOT_CODES);

@@ -1220,7 +1220,7 @@ export class InventoryService {
       throw new InventoryError(
         403,
         "MAIN_TREASURY_REPLACEMENT_FORBIDDEN",
-        "MAIN_TREASURY cannot be replaced. Only reserve slots (RESERVE_1–RESERVE_8) can be replaced."
+        "MAIN_TREASURY cannot be replaced. Only reserve slots (RESERVE_1–RESERVE_9) can be replaced."
       );
     }
 
